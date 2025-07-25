@@ -49,6 +49,15 @@ app.post('/api/upload-opml', upload.single('opml'), (req, res) => {
     });
 });
 
+// Serve React build in production
+if (process.env.NODE_ENV === 'production') {
+  const clientBuildPath = path.join(__dirname, 'client', 'build');
+  app.use(express.static(clientBuildPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientBuildPath, 'index.html'));
+  });
+}
+
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
