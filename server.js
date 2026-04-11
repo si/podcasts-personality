@@ -6,6 +6,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const OPMLParser = require('opmlparser');
 const Database = require('better-sqlite3');
+const { XMLParser } = require('fast-xml-parser');
 
 const app = express();
 
@@ -52,6 +53,16 @@ function getDb() {
         name       TEXT,
         podcasts   TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS podcast_cache (
+        xmlurl               TEXT PRIMARY KEY,
+        description          TEXT,
+        artwork              TEXT,
+        categories           TEXT,
+        latest_episode_title TEXT,
+        latest_episode_date  TEXT,
+        frequency            TEXT,
+        fetched_at           TEXT NOT NULL
       )
     `);
   }
@@ -94,6 +105,165 @@ function updateProfileName(hash, name) {
     .prepare('UPDATE profiles SET name = ? WHERE hash = ?')
     .run(name, hash);
   return result.changes > 0;
+}
+
+// ---- Podcast metadata cache ----
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function getCachedPodcast(xmlurl) {
+  return getDb().prepare('SELECT * FROM podcast_cache WHERE xmlurl = ?').get(xmlurl) || null;
+}
+
+function savePodcastCache(data) {
+  getDb().prepare(`
+    INSERT OR REPLACE INTO podcast_cache
+      (xmlurl, description, artwork, categories,
+       latest_episode_title, latest_episode_date, frequency, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    data.xmlurl, data.description, data.artwork, data.categories,
+    data.latest_episode_title, data.latest_episode_date, data.frequency, data.fetched_at
+  );
+}
+
+function stripHtml(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function calculateFrequency(episodes) {
+  if (episodes.length < 2) return 'unknown';
+  const recent = episodes.slice(0, Math.min(6, episodes.length));
+  const gaps = [];
+  for (let i = 0; i < recent.length - 1; i++) {
+    const gap = (recent[i].date - recent[i + 1].date) / (1000 * 60 * 60 * 24);
+    if (gap >= 0) gaps.push(gap);
+  }
+  if (gaps.length === 0) return 'unknown';
+  const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  if (avgGap < 1.5) return 'daily';
+  if (avgGap < 8) return 'weekly';
+  if (avgGap < 16) return 'biweekly';
+  if (avgGap < 35) return 'monthly';
+  if (avgGap < 90) return 'occasional';
+  return 'dormant';
+}
+
+function extractText(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') return val['#text'] || val.__cdata || '';
+  return String(val);
+}
+
+async function fetchPodcastMetadata(xmlurl) {
+  // Return from cache if still fresh
+  const cached = getCachedPodcast(xmlurl);
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
+    return { ...cached, categories: JSON.parse(cached.categories || '[]') };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  let xml;
+  try {
+    const response = await fetch(xmlurl, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'PodcastPersonality/1.0' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    xml = await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    cdataPropName: '__cdata',
+    isArray: (name) => ['item', 'entry', 'itunes:category', 'category'].includes(name),
+  });
+
+  const result = parser.parse(xml);
+  const channel = result?.rss?.channel || result?.feed;
+  if (!channel) throw new Error('No channel found in feed');
+
+  // Description
+  const rawDesc = channel['itunes:summary'] || channel.description || channel.subtitle || '';
+  const description = stripHtml(extractText(rawDesc)).slice(0, 500);
+
+  // Artwork
+  let artwork = '';
+  if (channel['itunes:image']?.['@_href']) {
+    artwork = channel['itunes:image']['@_href'];
+  } else if (channel.image?.url) {
+    artwork = extractText(channel.image.url);
+  }
+
+  // Categories
+  const categories = [];
+  const itunesCats = channel['itunes:category'];
+  if (Array.isArray(itunesCats)) {
+    itunesCats.forEach(c => { if (c['@_text']) categories.push(c['@_text']); });
+  } else if (itunesCats?.['@_text']) {
+    categories.push(itunesCats['@_text']);
+  }
+
+  // Episodes (RSS <item> or Atom <entry>)
+  const rawItems = channel.item || channel.entry || [];
+  const items = Array.isArray(rawItems) ? rawItems : [rawItems];
+  const episodes = items
+    .map(item => ({
+      title: extractText(item.title),
+      date: item.pubDate ? new Date(item.pubDate) : (item.updated ? new Date(item.updated) : null),
+    }))
+    .filter(ep => ep.date && !isNaN(ep.date.getTime()))
+    .sort((a, b) => b.date - a.date);
+
+  const latestEpisodeTitle = episodes[0]?.title || null;
+  const latestEpisodeDate = episodes[0]?.date?.toISOString() || null;
+  const frequency = calculateFrequency(episodes);
+
+  const metadata = {
+    xmlurl,
+    description,
+    artwork,
+    categories: JSON.stringify(categories),
+    latest_episode_title: latestEpisodeTitle,
+    latest_episode_date: latestEpisodeDate,
+    frequency,
+    fetched_at: new Date().toISOString(),
+  };
+
+  try { savePodcastCache(metadata); } catch (e) { console.error('Cache save failed:', e.message); }
+
+  return { ...metadata, categories };
+}
+
+function formatEnrichedMetadata(metadata) {
+  return {
+    description: metadata.description || null,
+    artwork: metadata.artwork || null,
+    categories: Array.isArray(metadata.categories)
+      ? metadata.categories
+      : JSON.parse(metadata.categories || '[]'),
+    latestEpisode: {
+      title: metadata.latest_episode_title || null,
+      date: metadata.latest_episode_date || null,
+    },
+    frequency: metadata.frequency || null,
+  };
 }
 
 // Health check
@@ -202,6 +372,45 @@ app.patch('/api/profiles/:hash', (req, res) => {
   }
 
   res.json({ name: trimmed });
+});
+
+// Enrich podcast metadata (with 24-hour cache per feed URL)
+app.post('/api/podcasts/enrich', async (req, res) => {
+  const { xmlurls } = req.body;
+  if (!Array.isArray(xmlurls) || xmlurls.length === 0) {
+    return res.status(400).json({ error: 'xmlurls must be a non-empty array' });
+  }
+
+  const urls = xmlurls.filter(u => typeof u === 'string').slice(0, 150);
+  const results = {};
+
+  // Return cached entries immediately; collect URLs that need live fetching
+  const toFetch = [];
+  for (const url of urls) {
+    const cached = getCachedPodcast(url);
+    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
+      results[url] = formatEnrichedMetadata(cached);
+    } else {
+      toFetch.push(url);
+    }
+  }
+
+  // Fetch uncached feeds with limited concurrency (10 at a time)
+  const CONCURRENCY = 10;
+  for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
+    const batch = toFetch.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(batch.map(async (url) => {
+      try {
+        const metadata = await fetchPodcastMetadata(url);
+        results[url] = formatEnrichedMetadata(metadata);
+      } catch (err) {
+        console.error(`Enrich failed for ${url}:`, err.message);
+        results[url] = null;
+      }
+    }));
+  }
+
+  res.json(results);
 });
 
 // Serve React build in production
