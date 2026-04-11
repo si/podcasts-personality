@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const OPMLParser = require('opmlparser');
+const Database = require('better-sqlite3');
 
 const app = express();
 
@@ -30,8 +31,8 @@ const upload = multer({
   }
 });
 
-// File-based profile storage
-// Set DATA_DIR env var to a persistent volume path on Railway
+// SQLite-backed profile storage.
+// Set DATA_DIR env var to a persistent volume path on Railway so the DB survives redeploys.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
 function ensureDataDir() {
@@ -40,7 +41,24 @@ function ensureDataDir() {
   }
 }
 
-// Validate hash to prevent path traversal
+let _db;
+function getDb() {
+  if (!_db) {
+    ensureDataDir();
+    _db = new Database(path.join(DATA_DIR, 'profiles.db'));
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS profiles (
+        hash       TEXT PRIMARY KEY,
+        name       TEXT,
+        podcasts   TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+  }
+  return _db;
+}
+
+// Validate hash to prevent path traversal / SQL injection via param
 function isValidHash(hash) {
   return typeof hash === 'string' && /^[A-Za-z0-9_-]{8}$/.test(hash);
 }
@@ -49,21 +67,33 @@ function generateHash() {
   return crypto.randomBytes(6).toString('base64url');
 }
 
+function hashExists(hash) {
+  return !!getDb().prepare('SELECT 1 FROM profiles WHERE hash = ?').get(hash);
+}
+
 function saveProfile(hash, podcasts) {
-  ensureDataDir();
-  const filePath = path.join(DATA_DIR, `${hash}.json`);
-  fs.writeFileSync(filePath, JSON.stringify({
-    hash,
-    podcasts,
-    created_at: new Date().toISOString()
-  }));
+  getDb()
+    .prepare('INSERT INTO profiles (hash, podcasts, created_at) VALUES (?, ?, ?)')
+    .run(hash, JSON.stringify(podcasts), new Date().toISOString());
 }
 
 function loadProfile(hash) {
   if (!isValidHash(hash)) return null;
-  const filePath = path.join(DATA_DIR, `${hash}.json`);
-  if (!fs.existsSync(filePath)) return null;
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const row = getDb().prepare('SELECT * FROM profiles WHERE hash = ?').get(hash);
+  if (!row) return null;
+  return {
+    hash: row.hash,
+    name: row.name || null,
+    podcasts: JSON.parse(row.podcasts),
+    created_at: row.created_at,
+  };
+}
+
+function updateProfileName(hash, name) {
+  const result = getDb()
+    .prepare('UPDATE profiles SET name = ? WHERE hash = ?')
+    .run(name, hash);
+  return result.changes > 0;
 }
 
 // Health check
@@ -132,7 +162,7 @@ app.post('/api/profiles', (req, res) => {
   do {
     hash = generateHash();
     attempts++;
-  } while (fs.existsSync(path.join(DATA_DIR, `${hash}.json`)) && attempts < 5);
+  } while (hashExists(hash) && attempts < 5);
 
   try {
     saveProfile(hash, podcasts);
@@ -151,6 +181,27 @@ app.get('/api/profiles/:hash', (req, res) => {
     return res.status(404).json({ error: 'Profile not found' });
   }
   res.json(profile);
+});
+
+// Update a profile's name
+app.patch('/api/profiles/:hash', (req, res) => {
+  const { hash } = req.params;
+  if (!isValidHash(hash)) {
+    return res.status(400).json({ error: 'Invalid profile id' });
+  }
+
+  const { name } = req.body;
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({ error: 'name must be a non-empty string' });
+  }
+
+  const trimmed = name.trim().slice(0, 100);
+  const updated = updateProfileName(hash, trimmed);
+  if (!updated) {
+    return res.status(404).json({ error: 'Profile not found' });
+  }
+
+  res.json({ name: trimmed });
 });
 
 // Serve React build in production
