@@ -2,6 +2,7 @@
   "name": "client",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:5000",
   "dependencies": {
     "@chakra-ui/react": "^3.22.0",
     "@emotion/react": "^11.14.0",
@@ -15,17 +16,10 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "axios": "^1.11.0",
-    "cors": "^2.8.5",
-    "express": "^5.1.0",
     "framer-motion": "^12.23.9",
-    "gravatar": "^1.8.2",
-    "multer": "^2.0.2",
-    "node-fetch": "^3.3.2",
-    "opmlparser": "^0.8.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-scripts": "5.0.1",
-    "sqlite3": "^5.1.7",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
   },
@@ -52,10 +46,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "description": "This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).",
-  "main": "index.js",
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  }
 }
