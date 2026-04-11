@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
+  Badge,
   Heading,
   VStack,
   HStack,
@@ -27,6 +28,46 @@ interface Profile {
   created_at: string;
 }
 
+interface PodcastMetadata {
+  description: string | null;
+  artwork: string | null;
+  categories: string[];
+  latestEpisode: {
+    title: string | null;
+    date: string | null;
+  };
+  frequency: string | null;
+}
+
+function formatRelativeDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  const days = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+const FREQUENCY_PALETTE: Record<string, string> = {
+  daily: 'green',
+  weekly: 'green',
+  biweekly: 'teal',
+  monthly: 'yellow',
+  occasional: 'orange',
+  dormant: 'red',
+};
+
+const FREQUENCY_LABEL: Record<string, string> = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  biweekly: 'Bi-weekly',
+  monthly: 'Monthly',
+  occasional: 'Occasional',
+  dormant: 'Dormant',
+};
+
 function ProfilePage() {
   const { hash } = useParams<{ hash: string }>();
   const navigate = useNavigate();
@@ -37,11 +78,15 @@ function ProfilePage() {
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
 
+  const [enriched, setEnriched] = useState<Record<string, PodcastMetadata | null>>({});
+  const [enriching, setEnriching] = useState(false);
+
   useEffect(() => {
     axios.get(`/api/profiles/${hash}`)
       .then(res => {
         setProfile(res.data);
         setNameInput(res.data.name || '');
+        enrichPodcasts(res.data.podcasts);
       })
       .catch(err => {
         if (err.response?.status === 404) {
@@ -52,7 +97,22 @@ function ProfilePage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [hash]);
+  }, [hash]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const enrichPodcasts = async (podcasts: Podcast[]) => {
+    if (podcasts.length === 0) return;
+    setEnriching(true);
+    try {
+      const res = await axios.post('/api/podcasts/enrich', {
+        xmlurls: podcasts.map(p => p.xmlurl),
+      });
+      setEnriched(res.data);
+    } catch (err) {
+      console.error('Failed to enrich podcasts', err);
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   const handleSaveName = async () => {
     if (!nameInput.trim()) return;
@@ -87,7 +147,7 @@ function ProfilePage() {
 
   return (
     <Box minH="100vh" bg="gray.50" py={10} px={4}>
-      <VStack gap={8} maxW="lg" mx="auto" bg="white" p={8} borderRadius="lg" boxShadow="md">
+      <VStack gap={8} maxW="2xl" mx="auto" bg="white" p={8} borderRadius="lg" boxShadow="md">
         {loading && <Spinner size="xl" />}
 
         {notFound && (
@@ -129,18 +189,109 @@ function ProfilePage() {
               </HStack>
             </Box>
 
-            <Text color="gray.500">{profile.podcasts.length} podcasts</Text>
+            <HStack w="100%" justify="space-between" align="center">
+              <Text color="gray.500">{profile.podcasts.length} podcasts</Text>
+              {enriching && (
+                <HStack gap={2}>
+                  <Spinner size="sm" />
+                  <Text fontSize="sm" color="gray.400">Loading details…</Text>
+                </HStack>
+              )}
+            </HStack>
+
             <Button colorPalette="blue" onClick={handleShare} w="100%">Share This Profile</Button>
+
             <Box w="100%">
-              <ListRoot gap={2}>
-                {profile.podcasts.map((p, i) => (
-                  <ListItem key={i}>
-                    <Text fontWeight="bold">{p.title || p.xmlurl}</Text>
-                    <Text fontSize="sm" color="gray.500">{p.xmlurl}</Text>
-                  </ListItem>
-                ))}
+              <ListRoot gap={4}>
+                {profile.podcasts.map((p, i) => {
+                  const meta = enriched[p.xmlurl];
+                  return (
+                    <ListItem key={i} listStyle="none">
+                      <HStack gap={3} align="start">
+                        {/* Artwork */}
+                        {meta?.artwork && (
+                          <Box flexShrink={0}>
+                            <img
+                              src={meta.artwork}
+                              alt=""
+                              width={64}
+                              height={64}
+                              style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          </Box>
+                        )}
+
+                        <Box flex={1} minW={0}>
+                          {/* Title + frequency badge */}
+                          <HStack justify="space-between" align="start" gap={2}>
+                            <Text fontWeight="bold" style={{ overflowWrap: 'anywhere' }}>
+                              {p.title || p.xmlurl}
+                            </Text>
+                            {meta?.frequency && meta.frequency !== 'unknown' && (
+                              <Badge
+                                colorPalette={FREQUENCY_PALETTE[meta.frequency] ?? 'gray'}
+                                variant="subtle"
+                                flexShrink={0}
+                                size="sm"
+                              >
+                                {FREQUENCY_LABEL[meta.frequency] ?? meta.frequency}
+                              </Badge>
+                            )}
+                          </HStack>
+
+                          {/* Description */}
+                          {meta?.description && (
+                            <Text
+                              fontSize="sm"
+                              color="gray.600"
+                              mt={1}
+                              style={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                              } as React.CSSProperties}
+                            >
+                              {meta.description}
+                            </Text>
+                          )}
+
+                          {/* Categories */}
+                          {meta?.categories && meta.categories.length > 0 && (
+                            <HStack gap={1} mt={1} flexWrap="wrap">
+                              {meta.categories.slice(0, 3).map((cat, ci) => (
+                                <Badge key={ci} colorPalette="blue" variant="outline" size="sm">
+                                  {cat}
+                                </Badge>
+                              ))}
+                            </HStack>
+                          )}
+
+                          {/* Latest episode */}
+                          {meta?.latestEpisode?.title && (
+                            <Text fontSize="xs" color="gray.400" mt={1} noOfLines={1}>
+                              Latest: {meta.latestEpisode.title}
+                              {meta.latestEpisode.date && (
+                                <> · {formatRelativeDate(meta.latestEpisode.date)}</>
+                              )}
+                            </Text>
+                          )}
+
+                          {/* Feed URL (shown when no description loaded yet) */}
+                          {!meta?.description && (
+                            <Text fontSize="xs" color="gray.400" mt={1} style={{ overflowWrap: 'anywhere' }}>
+                              {p.xmlurl}
+                            </Text>
+                          )}
+                        </Box>
+                      </HStack>
+                    </ListItem>
+                  );
+                })}
               </ListRoot>
             </Box>
+
             <Button variant="ghost" onClick={() => navigate('/')}>Create Your Own Profile</Button>
           </>
         )}
