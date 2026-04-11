@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -37,6 +37,7 @@ interface PodcastMetadata {
     date: string | null;
   };
   frequency: string | null;
+  websiteUrl: string | null;
 }
 
 function formatRelativeDate(isoDate: string): string {
@@ -80,6 +81,18 @@ function ProfilePage() {
 
   const [enriched, setEnriched] = useState<Record<string, PodcastMetadata | null>>({});
   const [enriching, setEnriching] = useState(false);
+
+  const sortedPodcasts = useMemo(() => {
+    if (!profile) return [];
+    return [...profile.podcasts].sort((a, b) => {
+      const dateA = enriched[a.xmlurl]?.latestEpisode?.date;
+      const dateB = enriched[b.xmlurl]?.latestEpisode?.date;
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    });
+  }, [profile, enriched]);
 
   useEffect(() => {
     axios.get(`/api/profiles/${hash}`)
@@ -203,22 +216,36 @@ function ProfilePage() {
 
             <Box w="100%">
               <ListRoot gap={4}>
-                {profile.podcasts.map((p, i) => {
+                {sortedPodcasts.map((p, i) => {
                   const meta = enriched[p.xmlurl];
+                  const href = meta?.websiteUrl || undefined;
                   return (
                     <ListItem key={i} listStyle="none">
                       <HStack gap={3} align="start">
                         {/* Artwork */}
                         {meta?.artwork && (
                           <Box flexShrink={0}>
-                            <img
-                              src={meta.artwork}
-                              alt=""
-                              width={64}
-                              height={64}
-                              style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
-                              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
+                            {href ? (
+                              <a href={href} target="_blank" rel="noopener noreferrer">
+                                <img
+                                  src={meta.artwork}
+                                  alt=""
+                                  width={64}
+                                  height={64}
+                                  style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
+                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                />
+                              </a>
+                            ) : (
+                              <img
+                                src={meta.artwork}
+                                alt=""
+                                width={64}
+                                height={64}
+                                style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
+                                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                              />
+                            )}
                           </Box>
                         )}
 
@@ -226,7 +253,13 @@ function ProfilePage() {
                           {/* Title + frequency badge */}
                           <HStack justify="space-between" align="start" gap={2}>
                             <Text fontWeight="bold" style={{ overflowWrap: 'anywhere' }}>
-                              {p.title || p.xmlurl}
+                              {href ? (
+                                <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+                                  {p.title || p.xmlurl}
+                                </a>
+                              ) : (
+                                p.title || p.xmlurl
+                              )}
                             </Text>
                             {meta?.frequency && meta.frequency !== 'unknown' && (
                               <Badge
