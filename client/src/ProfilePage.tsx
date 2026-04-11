@@ -270,7 +270,7 @@ function ProfilePage() {
 
                           {/* Latest episode */}
                           {meta?.latestEpisode?.title && (
-                            <Text fontSize="xs" color="gray.400" mt={1} noOfLines={1}>
+                            <Text fontSize="xs" color="gray.400" mt={1} truncate>
                               Latest: {meta.latestEpisode.title}
                               {meta.latestEpisode.date && (
                                 <> · {formatRelativeDate(meta.latestEpisode.date)}</>
