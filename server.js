@@ -65,6 +65,7 @@ function getDb() {
         fetched_at           TEXT NOT NULL
       )
     `);
+    try { _db.exec('ALTER TABLE podcast_cache ADD COLUMN website_url TEXT'); } catch (_) { /* column already exists */ }
   }
   return _db;
 }
@@ -119,11 +120,11 @@ function savePodcastCache(data) {
   getDb().prepare(`
     INSERT OR REPLACE INTO podcast_cache
       (xmlurl, description, artwork, categories,
-       latest_episode_title, latest_episode_date, frequency, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       latest_episode_title, latest_episode_date, frequency, website_url, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     data.xmlurl, data.description, data.artwork, data.categories,
-    data.latest_episode_title, data.latest_episode_date, data.frequency, data.fetched_at
+    data.latest_episode_title, data.latest_episode_date, data.frequency, data.website_url, data.fetched_at
   );
 }
 
@@ -211,6 +212,19 @@ async function fetchPodcastMetadata(xmlurl) {
     artwork = extractText(channel.image.url);
   }
 
+  // Website URL
+  let websiteUrl = '';
+  if (channel.link) {
+    if (typeof channel.link === 'string') {
+      websiteUrl = channel.link;
+    } else if (Array.isArray(channel.link)) {
+      const altLink = channel.link.find(l => l['@_rel'] === 'alternate' || !l['@_rel']);
+      websiteUrl = altLink?.['@_href'] || channel.link[0]?.['@_href'] || '';
+    } else if (typeof channel.link === 'object') {
+      websiteUrl = channel.link['@_href'] || channel.link['#text'] || '';
+    }
+  }
+
   // Categories
   const categories = [];
   const itunesCats = channel['itunes:category'];
@@ -243,6 +257,7 @@ async function fetchPodcastMetadata(xmlurl) {
     latest_episode_title: latestEpisodeTitle,
     latest_episode_date: latestEpisodeDate,
     frequency,
+    website_url: websiteUrl,
     fetched_at: new Date().toISOString(),
   };
 
@@ -263,6 +278,7 @@ function formatEnrichedMetadata(metadata) {
       date: metadata.latest_episode_date || null,
     },
     frequency: metadata.frequency || null,
+    websiteUrl: metadata.website_url || null,
   };
 }
 
