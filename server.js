@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const OPMLParser = require('opmlparser');
 const Database = require('better-sqlite3');
 const { XMLParser } = require('fast-xml-parser');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 
@@ -427,6 +428,128 @@ app.post('/api/podcasts/enrich', async (req, res) => {
   }
 
   res.json(results);
+});
+
+// Personality analysis endpoint — uses Claude to derive Big Five traits from podcast categories
+const PERSONALITY_SYSTEM_PROMPT = `You are an expert personality psychologist who analyses media consumption patterns to infer personality profiles. You apply the Big Five (OCEAN) personality model and Uses-and-Gratifications theory to provide accurate, nuanced insights based on podcast listening habits.
+
+Your analysis is always:
+- Evidence-based and grounded in media-psychology research
+- Specific and insightful, never generic
+- Balanced and non-judgmental
+- Probabilistic — patterns suggest tendencies, not certainties
+
+Respond with valid JSON only. No markdown, no explanations outside the JSON.`;
+
+app.post('/api/personality', async (req, res) => {
+  const { podcastSummary } = req.body;
+  if (!Array.isArray(podcastSummary) || podcastSummary.length === 0) {
+    return res.status(400).json({ error: 'podcastSummary must be a non-empty array' });
+  }
+
+  // Sanitise input
+  const summary = podcastSummary
+    .filter(p => p && typeof p.title === 'string')
+    .slice(0, 200)
+    .map(p => ({
+      title: String(p.title).slice(0, 200),
+      categories: Array.isArray(p.categories) ? p.categories.slice(0, 5).map(c => String(c).slice(0, 80)) : [],
+      frequency: typeof p.frequency === 'string' ? p.frequency : 'unknown',
+    }));
+
+  if (summary.length === 0) {
+    return res.status(400).json({ error: 'No valid podcast data provided' });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ error: 'AI analysis unavailable — ANTHROPIC_API_KEY not configured' });
+  }
+
+  try {
+    const client = new Anthropic({ apiKey });
+
+    // Build concise summary for the prompt
+    const categoryCounts = {};
+    for (const p of summary) {
+      for (const cat of p.categories) {
+        categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      }
+    }
+    const topCategories = Object.entries(categoryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([cat, count]) => `${cat} (${Math.round(count / summary.length * 100)}%)`)
+      .join(', ');
+
+    const freqCounts = {};
+    for (const p of summary) {
+      freqCounts[p.frequency] = (freqCounts[p.frequency] || 0) + 1;
+    }
+    const freqSummary = Object.entries(freqCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([f, n]) => `${n} ${f}`)
+      .join(', ');
+
+    const titles = summary.slice(0, 30).map(p => p.title).filter(Boolean).join(', ');
+
+    const userPrompt = `Analyse this podcast listening profile:
+Total podcasts: ${summary.length}
+Top categories (% of library): ${topCategories || 'uncategorised'}
+Publishing frequency breakdown: ${freqSummary}
+Sample podcast titles: ${titles}
+
+Return a JSON object with this exact structure:
+{
+  "archetype": "2-4 word evocative title, e.g. 'The Analytical Explorer'",
+  "summary": "2-3 sentences describing personality inferred from listening choices",
+  "traits": {
+    "openness": <integer 0-100>,
+    "conscientiousness": <integer 0-100>,
+    "extraversion": <integer 0-100>,
+    "agreeableness": <integer 0-100>,
+    "neuroticism": <integer 0-100>
+  },
+  "traitNotes": {
+    "openness": "one sentence explaining this score",
+    "conscientiousness": "one sentence explaining this score",
+    "extraversion": "one sentence explaining this score",
+    "agreeableness": "one sentence explaining this score",
+    "neuroticism": "one sentence explaining this score"
+  },
+  "interests": ["interest 1", "interest 2", "interest 3", "interest 4", "interest 5"],
+  "listeningStyle": "one sentence about how they engage with podcast content"
+}`;
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: [
+        {
+          type: 'text',
+          text: PERSONALITY_SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const raw = message.content[0]?.text || '';
+    let personality;
+    try {
+      const cleaned = raw.replace(/^```json\s*|\s*```$/g, '').trim();
+      personality = JSON.parse(cleaned);
+    } catch {
+      const match = raw.match(/\{[\s\S]+\}/);
+      if (match) personality = JSON.parse(match[0]);
+      else throw new Error('Could not parse AI response as JSON');
+    }
+
+    res.json({ personality });
+  } catch (err) {
+    console.error('Personality analysis failed:', err.message);
+    res.status(500).json({ error: 'AI analysis failed: ' + err.message });
+  }
 });
 
 // Serve React build in production

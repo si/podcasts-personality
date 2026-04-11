@@ -40,6 +40,21 @@ interface PodcastMetadata {
   websiteUrl: string | null;
 }
 
+interface PersonalityAnalysis {
+  archetype: string;
+  summary: string;
+  traits: {
+    openness: number;
+    conscientiousness: number;
+    extraversion: number;
+    agreeableness: number;
+    neuroticism: number;
+  };
+  traitNotes: Record<string, string>;
+  interests: string[];
+  listeningStyle: string;
+}
+
 function formatRelativeDate(isoDate: string): string {
   const date = new Date(isoDate);
   const days = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
@@ -67,7 +82,176 @@ const FREQUENCY_LABEL: Record<string, string> = {
   monthly: 'Monthly',
   occasional: 'Occasional',
   dormant: 'Dormant',
+  unknown: 'Unknown',
 };
+
+const FREQUENCY_EMOJI: Record<string, string> = {
+  daily: '🔥',
+  weekly: '📅',
+  biweekly: '📆',
+  monthly: '🗓️',
+  occasional: '🌊',
+  dormant: '💤',
+  unknown: '❓',
+};
+
+// Episodes per week for each cadence bucket
+const FREQUENCY_WEEKLY_RATE: Record<string, number> = {
+  daily: 7,
+  weekly: 1,
+  biweekly: 0.5,
+  monthly: 0.25,
+  occasional: 0.1,
+  dormant: 0,
+  unknown: 0,
+};
+
+const FREQUENCY_ORDER = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional', 'dormant', 'unknown'];
+
+const CATEGORY_EMOJIS: Record<string, string> = {
+  'Technology': '💻',
+  'Business': '💼',
+  'News': '📰',
+  'News Commentary': '🗣️',
+  'Science': '🔬',
+  'Natural Sciences': '🧪',
+  'Social Sciences': '🧠',
+  'Arts': '🎨',
+  'Visual Arts': '🖼️',
+  'Performing Arts': '🎭',
+  'Comedy': '😄',
+  'Comedy Interviews': '🎤',
+  'Stand-Up': '🎙️',
+  'Health & Fitness': '🏃',
+  'Fitness': '💪',
+  'Medicine': '🩺',
+  'Mental Health': '🧘',
+  'Nutrition': '🥗',
+  'Alternative Health': '🌿',
+  'Society & Culture': '🌍',
+  'Society': '🌍',
+  'Culture': '🎭',
+  'Education': '📚',
+  'Self-Improvement': '🌱',
+  'Language Learning': '🗣️',
+  'How To': '🔧',
+  'Sports': '⚽',
+  'Soccer': '⚽',
+  'Football': '🏈',
+  'Basketball': '🏀',
+  'Baseball': '⚾',
+  'Cricket': '🏏',
+  'Racing': '🏎️',
+  'Rugby': '🏉',
+  'Swimming': '🏊',
+  'Tennis': '🎾',
+  'Golf': '⛳',
+  'True Crime': '🔍',
+  'History': '📜',
+  'Music': '🎵',
+  'Music History': '🎼',
+  'Music Interviews': '🎤',
+  'Religion & Spirituality': '🙏',
+  'Christianity': '✝️',
+  'Islam': '☪️',
+  'Judaism': '✡️',
+  'Buddhism': '☸️',
+  'Spirituality': '✨',
+  'Government': '🏛️',
+  'Politics': '🗳️',
+  'Fiction': '📖',
+  'Science Fiction': '🚀',
+  'Drama': '🎭',
+  'Horror': '👻',
+  'Leisure': '🎮',
+  'Games': '🎮',
+  'Video Games': '🕹️',
+  'Hobbies': '🔧',
+  'Animation': '🎨',
+  'Anime': '🍜',
+  'Kids & Family': '👨‍👩‍👧',
+  'Kids': '👶',
+  'Parenting': '👨‍👩‍👧‍👦',
+  'Stories for Kids': '📖',
+  'Travel': '✈️',
+  'Outdoors': '🏔️',
+  'Wilderness': '🌲',
+  'Food': '🍕',
+  'TV & Film': '🎬',
+  'Film History': '🎥',
+  'Film Interviews': '🎬',
+  'Documentary': '📽️',
+  'Books': '📚',
+  'Design': '✏️',
+  'Fashion & Beauty': '👗',
+  'Entrepreneurship': '🚀',
+  'Investing': '📈',
+  'Marketing': '📢',
+  'Management': '👔',
+  'Finance': '💰',
+  'Personal Finance': '💵',
+  'Careers': '📋',
+  'Pets & Animals': '🐾',
+  'Fantasy Sports': '🏆',
+  'Relationships': '❤️',
+  'Sexuality': '💛',
+  'Philosophy': '💭',
+  'Personal Journals': '📓',
+  'Interviews': '🎙️',
+  'Language': '🌐',
+  'Astronomy': '🔭',
+  'Environment': '🌿',
+  'Healthcare': '🏥',
+  'Non-Profit': '🤝',
+};
+
+function getCategoryEmoji(category: string): string {
+  if (CATEGORY_EMOJIS[category]) return CATEGORY_EMOJIS[category];
+  // Fuzzy match on first word
+  const first = category.split(/[\s&]/)[0];
+  const match = Object.entries(CATEGORY_EMOJIS).find(([k]) => k.startsWith(first));
+  return match ? match[1] : '🎙️';
+}
+
+const TRAIT_LABELS: Record<string, string> = {
+  openness: 'Openness',
+  conscientiousness: 'Conscientiousness',
+  extraversion: 'Extraversion',
+  agreeableness: 'Agreeableness',
+  neuroticism: 'Neuroticism',
+};
+
+const TRAIT_EMOJIS: Record<string, string> = {
+  openness: '🔭',
+  conscientiousness: '📋',
+  extraversion: '🌟',
+  agreeableness: '🤝',
+  neuroticism: '🌊',
+};
+
+const TRAIT_COLORS: Record<string, string> = {
+  openness: 'var(--chakra-colors-purple-400)',
+  conscientiousness: 'var(--chakra-colors-green-400)',
+  extraversion: 'var(--chakra-colors-orange-400)',
+  agreeableness: 'var(--chakra-colors-teal-400)',
+  neuroticism: 'var(--chakra-colors-red-400)',
+};
+
+const TRAIT_ORDER: (keyof PersonalityAnalysis['traits'])[] = [
+  'openness', 'conscientiousness', 'extraversion', 'agreeableness', 'neuroticism',
+];
+
+function ProgressBar({ ratio, color }: { ratio: number; color: string }) {
+  return (
+    <Box h="7px" bg="gray.100" borderRadius="full" overflow="hidden">
+      <Box
+        h="7px"
+        borderRadius="full"
+        style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%`, background: color, transition: 'width 0.6s ease' }}
+      />
+    </Box>
+  );
+}
 
 function ProfilePage() {
   const { hash } = useParams<{ hash: string }>();
@@ -82,6 +266,9 @@ function ProfilePage() {
   const [enriched, setEnriched] = useState<Record<string, PodcastMetadata | null>>({});
   const [enriching, setEnriching] = useState(false);
 
+  const [personality, setPersonality] = useState<PersonalityAnalysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
   const sortedPodcasts = useMemo(() => {
     if (!profile) return [];
     return [...profile.podcasts].sort((a, b) => {
@@ -94,12 +281,44 @@ function ProfilePage() {
     });
   }, [profile, enriched]);
 
+  // Category ratios: count how many podcasts appear in each category
+  const categoryRatios = useMemo(() => {
+    const enrichedList = Object.values(enriched).filter(Boolean) as PodcastMetadata[];
+    if (enrichedList.length === 0) return [];
+    const counts: Record<string, number> = {};
+    for (const meta of enrichedList) {
+      for (const cat of meta.categories) {
+        counts[cat] = (counts[cat] || 0) + 1;
+      }
+    }
+    return Object.entries(counts)
+      .map(([category, count]) => ({ category, count, ratio: count / enrichedList.length }))
+      .sort((a, b) => b.count - a.count);
+  }, [enriched]);
+
+  // Frequency distribution: count per bucket
+  const frequencyDistribution = useMemo(() => {
+    const dist: Record<string, number> = {};
+    for (const meta of Object.values(enriched)) {
+      if (!meta?.frequency) continue;
+      dist[meta.frequency] = (dist[meta.frequency] || 0) + 1;
+    }
+    return dist;
+  }, [enriched]);
+
+  // Estimated new episodes per week across the library
+  const weeklyEpisodeRate = useMemo(() => {
+    return Object.entries(frequencyDistribution).reduce((sum, [freq, count]) => {
+      return sum + (FREQUENCY_WEEKLY_RATE[freq] ?? 0) * count;
+    }, 0);
+  }, [frequencyDistribution]);
+
   useEffect(() => {
     axios.get(`/api/profiles/${hash}`)
-      .then(res => {
+      .then(async res => {
         setProfile(res.data);
         setNameInput(res.data.name || '');
-        enrichPodcasts(res.data.podcasts);
+        await enrichPodcasts(res.data.podcasts);
       })
       .catch(err => {
         if (err.response?.status === 404) {
@@ -115,15 +334,48 @@ function ProfilePage() {
   const enrichPodcasts = async (podcasts: Podcast[]) => {
     if (podcasts.length === 0) return;
     setEnriching(true);
+    let enrichedData: Record<string, PodcastMetadata | null> = {};
     try {
       const res = await axios.post('/api/podcasts/enrich', {
         xmlurls: podcasts.map(p => p.xmlurl),
       });
-      setEnriched(res.data);
+      enrichedData = res.data;
+      setEnriched(enrichedData);
     } catch (err) {
       console.error('Failed to enrich podcasts', err);
     } finally {
       setEnriching(false);
+    }
+    // Trigger personality analysis once enrichment data is available
+    if (Object.keys(enrichedData).length > 0) {
+      runPersonalityAnalysis(podcasts, enrichedData);
+    }
+  };
+
+  const runPersonalityAnalysis = async (
+    podcasts: Podcast[],
+    enrichedData: Record<string, PodcastMetadata | null>,
+  ) => {
+    const podcastSummary = podcasts.map(p => ({
+      title: p.title,
+      categories: enrichedData[p.xmlurl]?.categories ?? [],
+      frequency: enrichedData[p.xmlurl]?.frequency ?? 'unknown',
+    }));
+    // Need at least a few podcasts with category data for a meaningful analysis
+    const withCategories = podcastSummary.filter(p => p.categories.length > 0);
+    if (withCategories.length < 3) return;
+
+    setAnalyzing(true);
+    try {
+      const res = await axios.post('/api/personality', { podcastSummary });
+      if (res.data.personality) setPersonality(res.data.personality);
+    } catch (err: any) {
+      // 503 = no API key configured — silently skip
+      if (err.response?.status !== 503) {
+        console.error('Personality analysis failed', err);
+      }
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -157,6 +409,8 @@ function ProfilePage() {
       toaster.create({ title: 'Link copied!', type: 'success', duration: 1500 });
     }
   };
+
+  const showAnalysisPanel = !enriching && (categoryRatios.length > 0 || Object.keys(frequencyDistribution).length > 0);
 
   return (
     <Box minH="100vh" bg="gray.50" py={10} px={4}>
@@ -214,6 +468,158 @@ function ProfilePage() {
 
             <Button colorPalette="blue" onClick={handleShare} w="100%">Share This Profile</Button>
 
+            {/* ── Personality Analysis Panel ── */}
+            {showAnalysisPanel && (
+              <Box w="100%" borderRadius="xl" overflow="hidden" borderWidth="1px" borderColor="gray.200">
+                {/* Panel header */}
+                <Box px={5} py={3} bg="gray.50" borderBottomWidth="1px" borderColor="gray.200">
+                  <HStack justify="space-between">
+                    <Text fontWeight="bold" fontSize="md">🎙️ Personality Insights</Text>
+                    {analyzing && (
+                      <HStack gap={1.5}>
+                        <Spinner size="xs" />
+                        <Text fontSize="xs" color="gray.400">Analysing…</Text>
+                      </HStack>
+                    )}
+                  </HStack>
+                </Box>
+
+                <Box p={5}>
+                  <VStack gap={5} align="stretch">
+
+                    {/* AI Archetype card */}
+                    {personality && (
+                      <Box
+                        p={4}
+                        bg="blue.50"
+                        borderRadius="lg"
+                        borderLeftWidth="4px"
+                        borderLeftColor="blue.400"
+                      >
+                        <Text fontWeight="bold" fontSize="lg" mb={1}>
+                          🧠 {personality.archetype}
+                        </Text>
+                        <Text fontSize="sm" color="gray.700" lineHeight="tall">
+                          {personality.summary}
+                        </Text>
+                        {personality.listeningStyle && (
+                          <Text fontSize="xs" color="blue.600" mt={2} fontStyle="italic">
+                            🎧 {personality.listeningStyle}
+                          </Text>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* ── Category breakdown ── */}
+                    {categoryRatios.length > 0 && (
+                      <Box>
+                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                          📊 Content Mix
+                        </Text>
+                        <VStack gap={2} align="stretch">
+                          {categoryRatios.slice(0, 8).map(({ category, count, ratio }) => (
+                            <Box key={category}>
+                              <HStack justify="space-between" mb={1}>
+                                <Text fontSize="sm">
+                                  {getCategoryEmoji(category)} {category}
+                                </Text>
+                                <Text fontSize="xs" color="gray.500" fontWeight="medium">
+                                  {Math.round(ratio * 100)}% &nbsp;
+                                  <Text as="span" color="gray.400">({count})</Text>
+                                </Text>
+                              </HStack>
+                              <ProgressBar ratio={ratio} color="var(--chakra-colors-blue-400)" />
+                            </Box>
+                          ))}
+                          {categoryRatios.length > 8 && (
+                            <Text fontSize="xs" color="gray.400">
+                              +{categoryRatios.length - 8} more categories
+                            </Text>
+                          )}
+                        </VStack>
+                      </Box>
+                    )}
+
+                    {/* ── Frequency / cadence ── */}
+                    {Object.keys(frequencyDistribution).length > 0 && (
+                      <Box>
+                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                          ⏱️ Content Cadence
+                        </Text>
+                        <HStack flexWrap="wrap" gap={2} mb={2}>
+                          {FREQUENCY_ORDER.filter(f => frequencyDistribution[f]).map(freq => (
+                            <Badge
+                              key={freq}
+                              colorPalette={FREQUENCY_PALETTE[freq] ?? 'gray'}
+                              variant="subtle"
+                              size="md"
+                            >
+                              {FREQUENCY_EMOJI[freq]} {frequencyDistribution[freq]} {FREQUENCY_LABEL[freq] ?? freq}
+                            </Badge>
+                          ))}
+                        </HStack>
+                        {weeklyEpisodeRate > 0 && (
+                          <Text fontSize="xs" color="gray.500">
+                            📬 Your library generates ~<Text as="span" fontWeight="semibold">{Math.round(weeklyEpisodeRate)}</Text> new episodes per week
+                          </Text>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* ── Big Five traits ── */}
+                    {personality?.traits && (
+                      <Box>
+                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                          🌊 Big Five Personality Traits
+                        </Text>
+                        <VStack gap={3} align="stretch">
+                          {TRAIT_ORDER.map(trait => {
+                            const score = personality.traits[trait];
+                            return (
+                              <Box key={trait}>
+                                <HStack justify="space-between" mb={1}>
+                                  <Text fontSize="sm">
+                                    {TRAIT_EMOJIS[trait]} {TRAIT_LABELS[trait]}
+                                  </Text>
+                                  <Text fontSize="xs" color="gray.500" fontWeight="medium">
+                                    {score}%
+                                  </Text>
+                                </HStack>
+                                <ProgressBar ratio={score / 100} color={TRAIT_COLORS[trait]} />
+                                {personality.traitNotes?.[trait] && (
+                                  <Text fontSize="xs" color="gray.500" mt={0.5} lineHeight="short">
+                                    {personality.traitNotes[trait]}
+                                  </Text>
+                                )}
+                              </Box>
+                            );
+                          })}
+                        </VStack>
+                      </Box>
+                    )}
+
+                    {/* ── Key interests ── */}
+                    {personality?.interests && personality.interests.length > 0 && (
+                      <Box>
+                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={2}>
+                          ✨ Key Interests
+                        </Text>
+                        <HStack flexWrap="wrap" gap={2}>
+                          {personality.interests.map((interest, i) => (
+                            <Badge key={i} colorPalette="purple" variant="outline" size="sm">
+                              {interest}
+                            </Badge>
+                          ))}
+                        </HStack>
+                      </Box>
+                    )}
+
+                  </VStack>
+                </Box>
+              </Box>
+            )}
+
+            {/* ── Podcast list ── */}
             <Box w="100%">
               <ListRoot gap={4}>
                 {sortedPodcasts.map((p, i) => {
