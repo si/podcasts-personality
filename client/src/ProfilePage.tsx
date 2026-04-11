@@ -4,11 +4,13 @@ import {
   Box,
   Heading,
   VStack,
+  HStack,
   Text,
   ListRoot,
   ListItem,
   Spinner,
   Button,
+  Input,
 } from '@chakra-ui/react';
 import axios from 'axios';
 import { toaster } from './toaster';
@@ -20,6 +22,7 @@ interface Podcast {
 
 interface Profile {
   hash: string;
+  name: string | null;
   podcasts: Podcast[];
   created_at: string;
 }
@@ -31,9 +34,15 @@ function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
+  const [nameInput, setNameInput] = useState('');
+  const [savingName, setSavingName] = useState(false);
+
   useEffect(() => {
     axios.get(`/api/profiles/${hash}`)
-      .then(res => setProfile(res.data))
+      .then(res => {
+        setProfile(res.data);
+        setNameInput(res.data.name || '');
+      })
       .catch(err => {
         if (err.response?.status === 404) {
           setNotFound(true);
@@ -44,6 +53,20 @@ function ProfilePage() {
       })
       .finally(() => setLoading(false));
   }, [hash]);
+
+  const handleSaveName = async () => {
+    if (!nameInput.trim()) return;
+    setSavingName(true);
+    try {
+      const res = await axios.patch(`/api/profiles/${hash}`, { name: nameInput.trim() });
+      setProfile(prev => prev ? { ...prev, name: res.data.name } : prev);
+      toaster.create({ title: 'Name saved!', type: 'success', duration: 1500 });
+    } catch {
+      toaster.create({ title: 'Failed to save name', type: 'error', duration: 3000 });
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const handleShare = async () => {
     const url = window.location.href;
@@ -77,7 +100,35 @@ function ProfilePage() {
 
         {profile && (
           <>
-            <Heading as="h1" size="lg">Podcast Profile</Heading>
+            <Heading as="h1" size="lg">
+              {profile.name ? `${profile.name}'s Profile` : 'Podcast Profile'}
+            </Heading>
+
+            {/* Name form */}
+            <Box w="100%" p={4} bg="gray.50" borderRadius="md">
+              <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.600">
+                {profile.name ? 'Your name' : 'Set your name'}
+              </Text>
+              <HStack>
+                <Input
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  placeholder="Enter your name"
+                  size="sm"
+                  onKeyDown={e => e.key === 'Enter' && handleSaveName()}
+                />
+                <Button
+                  size="sm"
+                  colorPalette="blue"
+                  onClick={handleSaveName}
+                  loading={savingName}
+                  disabled={!nameInput.trim() || savingName}
+                >
+                  Save
+                </Button>
+              </HStack>
+            </Box>
+
             <Text color="gray.500">{profile.podcasts.length} podcasts</Text>
             <Button colorPalette="blue" onClick={handleShare} w="100%">Share This Profile</Button>
             <Box w="100%">
