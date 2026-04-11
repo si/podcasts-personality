@@ -33,7 +33,7 @@ function App() {
     const formData = new FormData();
     formData.append('opml', file);
     try {
-      const res = await axios.post('http://localhost:5000/api/upload-opml', formData, {
+      const res = await axios.post('/api/upload-opml', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setPodcasts(res.data.podcasts);
