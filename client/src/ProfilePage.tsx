@@ -3,16 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
   Badge,
-  Heading,
-  VStack,
-  HStack,
+  Title,
+  Stack,
+  Group,
   Text,
-  ListRoot,
-  ListItem,
-  Spinner,
+  Loader,
   Button,
-  Input,
-} from '@chakra-ui/react';
+  TextInput,
+} from '@mantine/core';
 import axios from 'axios';
 import { toaster } from './toaster';
 
@@ -66,7 +64,7 @@ function formatRelativeDate(isoDate: string): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-const FREQUENCY_PALETTE: Record<string, string> = {
+const FREQUENCY_COLOR: Record<string, string> = {
   daily: 'green',
   weekly: 'green',
   biweekly: 'teal',
@@ -230,11 +228,11 @@ const TRAIT_EMOJIS: Record<string, string> = {
 };
 
 const TRAIT_COLORS: Record<string, string> = {
-  openness: 'var(--chakra-colors-purple-400)',
-  conscientiousness: 'var(--chakra-colors-green-400)',
-  extraversion: 'var(--chakra-colors-orange-400)',
-  agreeableness: 'var(--chakra-colors-teal-400)',
-  neuroticism: 'var(--chakra-colors-red-400)',
+  openness: 'var(--mantine-color-violet-4)',
+  conscientiousness: 'var(--mantine-color-green-4)',
+  extraversion: 'var(--mantine-color-orange-4)',
+  agreeableness: 'var(--mantine-color-teal-4)',
+  neuroticism: 'var(--mantine-color-red-4)',
 };
 
 const TRAIT_ORDER: (keyof PersonalityAnalysis['traits'])[] = [
@@ -243,11 +241,10 @@ const TRAIT_ORDER: (keyof PersonalityAnalysis['traits'])[] = [
 
 function ProgressBar({ ratio, color }: { ratio: number; color: string }) {
   return (
-    <Box h="7px" bg="gray.100" borderRadius="full" overflow="hidden">
+    <Box h={7} bg="gray.1" style={{ borderRadius: 999, overflow: 'hidden' }}>
       <Box
-        h="7px"
-        borderRadius="full"
-        style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%`, background: color, transition: 'width 0.6s ease' }}
+        h={7}
+        style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%`, background: color, borderRadius: 999, transition: 'width 0.6s ease' }}
       />
     </Box>
   );
@@ -413,97 +410,110 @@ function ProfilePage() {
   const showAnalysisPanel = !enriching && (categoryRatios.length > 0 || Object.keys(frequencyDistribution).length > 0);
 
   return (
-    <Box minH="100vh" bg="gray.50" py={10} px={4}>
-      <VStack gap={8} maxW="2xl" mx="auto" bg="white" p={8} borderRadius="lg" boxShadow="md">
-        {loading && <Spinner size="xl" />}
+    <Box mih="100vh" bg="gray.0" py={40} px={16}>
+      <Stack gap={24} maw={672} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+        {loading && <Loader size="xl" mx="auto" />}
 
         {notFound && (
           <>
-            <Heading as="h1" size="lg">Profile Not Found</Heading>
-            <Text color="gray.500">This profile doesn't exist or has been removed.</Text>
-            <Button colorPalette="blue" onClick={() => navigate('/')}>Create Your Own Profile</Button>
+            <Title order={1} size="h2">Profile Not Found</Title>
+            <Text c="gray.5">This profile doesn't exist or has been removed.</Text>
+            <Button variant="gradient" gradient={{ from: 'blue', to: 'cyan' }} onClick={() => navigate('/')}>Create Your Own Profile</Button>
           </>
         )}
 
         {profile && (
           <>
-            <Heading as="h1" size="lg">
+            <Text
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'cyan' }}
+              fw={900}
+              fz="xl"
+              style={{ fontSize: 26 }}
+            >
               {profile.name ? `${profile.name}'s Profile` : 'Podcast Profile'}
-            </Heading>
+            </Text>
 
             {/* Name form */}
-            <Box w="100%" p={4} bg="gray.50" borderRadius="md">
-              <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.600">
+            <Box w="100%" p={16} bg="gray.0" style={{ borderRadius: 8 }}>
+              <Text size="sm" fw={600} mb={8} c="gray.6">
                 {profile.name ? 'Your name' : 'Set your name'}
               </Text>
-              <HStack>
-                <Input
+              <Group>
+                <TextInput
                   value={nameInput}
                   onChange={e => setNameInput(e.target.value)}
                   placeholder="Enter your name"
                   size="sm"
+                  style={{ flex: 1 }}
                   onKeyDown={e => e.key === 'Enter' && handleSaveName()}
                 />
                 <Button
                   size="sm"
-                  colorPalette="blue"
+                  variant="gradient"
+                  gradient={{ from: 'blue', to: 'cyan' }}
                   onClick={handleSaveName}
                   loading={savingName}
                   disabled={!nameInput.trim() || savingName}
                 >
                   Save
                 </Button>
-              </HStack>
+              </Group>
             </Box>
 
-            <HStack w="100%" justify="space-between" align="center">
-              <Text color="gray.500">{profile.podcasts.length} podcasts</Text>
+            <Group w="100%" justify="space-between" align="center">
+              <Text c="gray.5">{profile.podcasts.length} podcasts</Text>
               {enriching && (
-                <HStack gap={2}>
-                  <Spinner size="sm" />
-                  <Text fontSize="sm" color="gray.400">Loading details…</Text>
-                </HStack>
+                <Group gap={8}>
+                  <Loader size="sm" />
+                  <Text size="sm" c="gray.4">Loading details…</Text>
+                </Group>
               )}
-            </HStack>
+            </Group>
 
-            <Button colorPalette="blue" onClick={handleShare} w="100%">Share This Profile</Button>
+            <Button variant="gradient" gradient={{ from: 'violet', to: 'pink' }} onClick={handleShare} fullWidth>
+              Share This Profile
+            </Button>
 
             {/* ── Personality Analysis Panel ── */}
             {showAnalysisPanel && (
-              <Box w="100%" borderRadius="xl" overflow="hidden" borderWidth="1px" borderColor="gray.200">
-                {/* Panel header */}
-                <Box px={5} py={3} bg="gray.50" borderBottomWidth="1px" borderColor="gray.200">
-                  <HStack justify="space-between">
-                    <Text fontWeight="bold" fontSize="md">🎙️ Personality Insights</Text>
+              <Box w="100%" style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid var(--mantine-color-gray-2)' }}>
+                {/* Panel header — gradient strip */}
+                <Box
+                  px={20} py={12}
+                  style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderBottom: '1px solid var(--mantine-color-gray-2)' }}
+                >
+                  <Group justify="space-between">
+                    <Text fw={700} c="white">🎙️ Personality Insights</Text>
                     {analyzing && (
-                      <HStack gap={1.5}>
-                        <Spinner size="xs" />
-                        <Text fontSize="xs" color="gray.400">Analysing…</Text>
-                      </HStack>
+                      <Group gap={6}>
+                        <Loader size="xs" color="white" />
+                        <Text size="xs" c="white" opacity={0.8}>Analysing…</Text>
+                      </Group>
                     )}
-                  </HStack>
+                  </Group>
                 </Box>
 
-                <Box p={5}>
-                  <VStack gap={5} align="stretch">
+                <Box p={20}>
+                  <Stack gap={20}>
 
                     {/* AI Archetype card */}
                     {personality && (
                       <Box
-                        p={4}
-                        bg="blue.50"
-                        borderRadius="lg"
-                        borderLeftWidth="4px"
-                        borderLeftColor="blue.400"
+                        p={16}
+                        style={{
+                          background: 'linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%)',
+                          borderRadius: 12,
+                        }}
                       >
-                        <Text fontWeight="bold" fontSize="lg" mb={1}>
+                        <Text fw={700} size="lg" mb={4}>
                           🧠 {personality.archetype}
                         </Text>
-                        <Text fontSize="sm" color="gray.700" lineHeight="tall">
+                        <Text size="sm" c="gray.8" style={{ lineHeight: 1.6 }}>
                           {personality.summary}
                         </Text>
                         {personality.listeningStyle && (
-                          <Text fontSize="xs" color="blue.600" mt={2} fontStyle="italic">
+                          <Text size="xs" c="violet.7" mt={8} fs="italic">
                             🎧 {personality.listeningStyle}
                           </Text>
                         )}
@@ -513,54 +523,54 @@ function ProfilePage() {
                     {/* ── Category breakdown ── */}
                     {categoryRatios.length > 0 && (
                       <Box>
-                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                        <Text fw={600} size="sm" c="gray.6" mb={12}>
                           📊 Content Mix
                         </Text>
-                        <VStack gap={2} align="stretch">
+                        <Stack gap={8}>
                           {categoryRatios.slice(0, 8).map(({ category, count, ratio }) => (
                             <Box key={category}>
-                              <HStack justify="space-between" mb={1}>
-                                <Text fontSize="sm">
+                              <Group justify="space-between" mb={4}>
+                                <Text size="sm">
                                   {getCategoryEmoji(category)} {category}
                                 </Text>
-                                <Text fontSize="xs" color="gray.500" fontWeight="medium">
-                                  {Math.round(ratio * 100)}% &nbsp;
-                                  <Text as="span" color="gray.400">({count})</Text>
+                                <Text size="xs" c="gray.5" fw={500}>
+                                  {Math.round(ratio * 100)}%{' '}
+                                  <Text component="span" c="gray.4">({count})</Text>
                                 </Text>
-                              </HStack>
-                              <ProgressBar ratio={ratio} color="var(--chakra-colors-blue-400)" />
+                              </Group>
+                              <ProgressBar ratio={ratio} color="var(--mantine-color-blue-4)" />
                             </Box>
                           ))}
                           {categoryRatios.length > 8 && (
-                            <Text fontSize="xs" color="gray.400">
+                            <Text size="xs" c="gray.4">
                               +{categoryRatios.length - 8} more categories
                             </Text>
                           )}
-                        </VStack>
+                        </Stack>
                       </Box>
                     )}
 
                     {/* ── Frequency / cadence ── */}
                     {Object.keys(frequencyDistribution).length > 0 && (
                       <Box>
-                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                        <Text fw={600} size="sm" c="gray.6" mb={12}>
                           ⏱️ Content Cadence
                         </Text>
-                        <HStack flexWrap="wrap" gap={2} mb={2}>
+                        <Group wrap="wrap" gap={8} mb={8}>
                           {FREQUENCY_ORDER.filter(f => frequencyDistribution[f]).map(freq => (
                             <Badge
                               key={freq}
-                              colorPalette={FREQUENCY_PALETTE[freq] ?? 'gray'}
-                              variant="subtle"
+                              color={FREQUENCY_COLOR[freq] ?? 'gray'}
+                              variant="light"
                               size="md"
                             >
                               {FREQUENCY_EMOJI[freq]} {frequencyDistribution[freq]} {FREQUENCY_LABEL[freq] ?? freq}
                             </Badge>
                           ))}
-                        </HStack>
+                        </Group>
                         {weeklyEpisodeRate > 0 && (
-                          <Text fontSize="xs" color="gray.500">
-                            📬 Your library generates ~<Text as="span" fontWeight="semibold">{Math.round(weeklyEpisodeRate)}</Text> new episodes per week
+                          <Text size="xs" c="gray.5">
+                            📬 Your library generates ~<Text component="span" fw={600}>{Math.round(weeklyEpisodeRate)}</Text> new episodes per week
                           </Text>
                         )}
                       </Box>
@@ -569,68 +579,68 @@ function ProfilePage() {
                     {/* ── Big Five traits ── */}
                     {personality?.traits && (
                       <Box>
-                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={3}>
+                        <Text fw={600} size="sm" c="gray.6" mb={12}>
                           🌊 Big Five Personality Traits
                         </Text>
-                        <VStack gap={3} align="stretch">
+                        <Stack gap={12}>
                           {TRAIT_ORDER.map(trait => {
                             const score = personality.traits[trait];
                             return (
                               <Box key={trait}>
-                                <HStack justify="space-between" mb={1}>
-                                  <Text fontSize="sm">
+                                <Group justify="space-between" mb={4}>
+                                  <Text size="sm">
                                     {TRAIT_EMOJIS[trait]} {TRAIT_LABELS[trait]}
                                   </Text>
-                                  <Text fontSize="xs" color="gray.500" fontWeight="medium">
+                                  <Text size="xs" c="gray.5" fw={500}>
                                     {score}%
                                   </Text>
-                                </HStack>
+                                </Group>
                                 <ProgressBar ratio={score / 100} color={TRAIT_COLORS[trait]} />
                                 {personality.traitNotes?.[trait] && (
-                                  <Text fontSize="xs" color="gray.500" mt={0.5} lineHeight="short">
+                                  <Text size="xs" c="gray.5" mt={2} style={{ lineHeight: 1.4 }}>
                                     {personality.traitNotes[trait]}
                                   </Text>
                                 )}
                               </Box>
                             );
                           })}
-                        </VStack>
+                        </Stack>
                       </Box>
                     )}
 
                     {/* ── Key interests ── */}
                     {personality?.interests && personality.interests.length > 0 && (
                       <Box>
-                        <Text fontWeight="semibold" fontSize="sm" color="gray.600" mb={2}>
+                        <Text fw={600} size="sm" c="gray.6" mb={8}>
                           ✨ Key Interests
                         </Text>
-                        <HStack flexWrap="wrap" gap={2}>
+                        <Group wrap="wrap" gap={8}>
                           {personality.interests.map((interest, i) => (
-                            <Badge key={i} colorPalette="purple" variant="outline" size="sm">
+                            <Badge key={i} color="violet" variant="outline" size="sm">
                               {interest}
                             </Badge>
                           ))}
-                        </HStack>
+                        </Group>
                       </Box>
                     )}
 
-                  </VStack>
+                  </Stack>
                 </Box>
               </Box>
             )}
 
             {/* ── Podcast list ── */}
             <Box w="100%">
-              <ListRoot gap={4}>
+              <Stack gap={16}>
                 {sortedPodcasts.map((p, i) => {
                   const meta = enriched[p.xmlurl];
                   const href = meta?.websiteUrl || undefined;
                   return (
-                    <ListItem key={i} listStyle="none">
-                      <HStack gap={3} align="start">
+                    <Box key={i}>
+                      <Group gap={12} align="flex-start">
                         {/* Artwork */}
                         {meta?.artwork && (
-                          <Box flexShrink={0}>
+                          <Box style={{ flexShrink: 0 }}>
                             {href ? (
                               <a href={href} target="_blank" rel="noopener noreferrer">
                                 <img
@@ -655,10 +665,10 @@ function ProfilePage() {
                           </Box>
                         )}
 
-                        <Box flex={1} minW={0}>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
                           {/* Title + frequency badge */}
-                          <HStack justify="space-between" align="start" gap={2}>
-                            <Text fontWeight="bold" style={{ overflowWrap: 'anywhere' }}>
+                          <Group justify="space-between" align="flex-start" gap={8}>
+                            <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
                               {href ? (
                                 <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
                                   {p.title || p.xmlurl}
@@ -669,22 +679,22 @@ function ProfilePage() {
                             </Text>
                             {meta?.frequency && meta.frequency !== 'unknown' && (
                               <Badge
-                                colorPalette={FREQUENCY_PALETTE[meta.frequency] ?? 'gray'}
-                                variant="subtle"
-                                flexShrink={0}
+                                color={FREQUENCY_COLOR[meta.frequency] ?? 'gray'}
+                                variant="light"
                                 size="sm"
+                                style={{ flexShrink: 0 }}
                               >
                                 {FREQUENCY_LABEL[meta.frequency] ?? meta.frequency}
                               </Badge>
                             )}
-                          </HStack>
+                          </Group>
 
                           {/* Description */}
                           {meta?.description && (
                             <Text
-                              fontSize="sm"
-                              color="gray.600"
-                              mt={1}
+                              size="sm"
+                              c="gray.6"
+                              mt={4}
                               style={{
                                 display: '-webkit-box',
                                 WebkitLineClamp: 2,
@@ -698,18 +708,18 @@ function ProfilePage() {
 
                           {/* Categories */}
                           {meta?.categories && meta.categories.length > 0 && (
-                            <HStack gap={1} mt={1} flexWrap="wrap">
+                            <Group gap={4} mt={4} wrap="wrap">
                               {meta.categories.slice(0, 3).map((cat, ci) => (
-                                <Badge key={ci} colorPalette="blue" variant="outline" size="sm">
+                                <Badge key={ci} color="blue" variant="outline" size="sm">
                                   {cat}
                                 </Badge>
                               ))}
-                            </HStack>
+                            </Group>
                           )}
 
                           {/* Latest episode */}
                           {meta?.latestEpisode?.title && (
-                            <Text fontSize="xs" color="gray.400" mt={1} truncate>
+                            <Text size="xs" c="gray.4" mt={4} truncate="end">
                               Latest: {meta.latestEpisode.title}
                               {meta.latestEpisode.date && (
                                 <> · {formatRelativeDate(meta.latestEpisode.date)}</>
@@ -719,22 +729,22 @@ function ProfilePage() {
 
                           {/* Feed URL (shown when no description loaded yet) */}
                           {!meta?.description && (
-                            <Text fontSize="xs" color="gray.400" mt={1} style={{ overflowWrap: 'anywhere' }}>
+                            <Text size="xs" c="gray.4" mt={4} style={{ overflowWrap: 'anywhere' }}>
                               {p.xmlurl}
                             </Text>
                           )}
                         </Box>
-                      </HStack>
-                    </ListItem>
+                      </Group>
+                    </Box>
                   );
                 })}
-              </ListRoot>
+              </Stack>
             </Box>
 
-            <Button variant="ghost" onClick={() => navigate('/')}>Create Your Own Profile</Button>
+            <Button variant="subtle" onClick={() => navigate('/')}>Create Your Own Profile</Button>
           </>
         )}
-      </VStack>
+      </Stack>
     </Box>
   );
 }
