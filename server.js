@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const OPMLParser = require('opmlparser');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 const { XMLParser } = require('fast-xml-parser');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -33,42 +33,32 @@ const upload = multer({
   }
 });
 
-// SQLite-backed profile storage.
-// Set DATA_DIR env var to a persistent volume path on Railway so the DB survives redeploys.
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+// PostgreSQL-backed profile storage.
+// Railway injects DATABASE_URL automatically when a Postgres service is added to the project.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
-let _db;
-function getDb() {
-  if (!_db) {
-    ensureDataDir();
-    _db = new Database(path.join(DATA_DIR, 'profiles.db'));
-    _db.exec(`
-      CREATE TABLE IF NOT EXISTS profiles (
-        hash       TEXT PRIMARY KEY,
-        name       TEXT,
-        podcasts   TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS podcast_cache (
-        xmlurl               TEXT PRIMARY KEY,
-        description          TEXT,
-        artwork              TEXT,
-        categories           TEXT,
-        latest_episode_title TEXT,
-        latest_episode_date  TEXT,
-        frequency            TEXT,
-        fetched_at           TEXT NOT NULL
-      )
-    `);
-    try { _db.exec('ALTER TABLE podcast_cache ADD COLUMN website_url TEXT'); } catch (_) { /* column already exists */ }
-  }
-  return _db;
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS profiles (
+      hash       TEXT PRIMARY KEY,
+      name       TEXT,
+      podcasts   TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS podcast_cache (
+      xmlurl               TEXT PRIMARY KEY,
+      description          TEXT,
+      artwork              TEXT,
+      categories           TEXT,
+      latest_episode_title TEXT,
+      latest_episode_date  TEXT,
+      frequency            TEXT,
+      fetched_at           TEXT NOT NULL,
+      website_url          TEXT
+    )
+  `);
 }
 
 // Validate hash to prevent path traversal / SQL injection via param
@@ -80,20 +70,23 @@ function generateHash() {
   return crypto.randomBytes(6).toString('base64url');
 }
 
-function hashExists(hash) {
-  return !!getDb().prepare('SELECT 1 FROM profiles WHERE hash = ?').get(hash);
+async function hashExists(hash) {
+  const { rows } = await pool.query('SELECT 1 FROM profiles WHERE hash = $1', [hash]);
+  return rows.length > 0;
 }
 
-function saveProfile(hash, podcasts) {
-  getDb()
-    .prepare('INSERT INTO profiles (hash, podcasts, created_at) VALUES (?, ?, ?)')
-    .run(hash, JSON.stringify(podcasts), new Date().toISOString());
+async function saveProfile(hash, podcasts) {
+  await pool.query(
+    'INSERT INTO profiles (hash, podcasts, created_at) VALUES ($1, $2, $3)',
+    [hash, JSON.stringify(podcasts), new Date().toISOString()]
+  );
 }
 
-function loadProfile(hash) {
+async function loadProfile(hash) {
   if (!isValidHash(hash)) return null;
-  const row = getDb().prepare('SELECT * FROM profiles WHERE hash = ?').get(hash);
-  if (!row) return null;
+  const { rows } = await pool.query('SELECT * FROM profiles WHERE hash = $1', [hash]);
+  if (rows.length === 0) return null;
+  const row = rows[0];
   return {
     hash: row.hash,
     name: row.name || null,
@@ -102,31 +95,42 @@ function loadProfile(hash) {
   };
 }
 
-function updateProfileName(hash, name) {
-  const result = getDb()
-    .prepare('UPDATE profiles SET name = ? WHERE hash = ?')
-    .run(name, hash);
-  return result.changes > 0;
+async function updateProfileName(hash, name) {
+  const { rowCount } = await pool.query(
+    'UPDATE profiles SET name = $1 WHERE hash = $2',
+    [name, hash]
+  );
+  return rowCount > 0;
 }
 
 // ---- Podcast metadata cache ----
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-function getCachedPodcast(xmlurl) {
-  return getDb().prepare('SELECT * FROM podcast_cache WHERE xmlurl = ?').get(xmlurl) || null;
+async function getCachedPodcast(xmlurl) {
+  const { rows } = await pool.query('SELECT * FROM podcast_cache WHERE xmlurl = $1', [xmlurl]);
+  return rows[0] || null;
 }
 
-function savePodcastCache(data) {
-  getDb().prepare(`
-    INSERT OR REPLACE INTO podcast_cache
+async function savePodcastCache(data) {
+  await pool.query(`
+    INSERT INTO podcast_cache
       (xmlurl, description, artwork, categories,
        latest_episode_title, latest_episode_date, frequency, website_url, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (xmlurl) DO UPDATE SET
+      description          = EXCLUDED.description,
+      artwork              = EXCLUDED.artwork,
+      categories           = EXCLUDED.categories,
+      latest_episode_title = EXCLUDED.latest_episode_title,
+      latest_episode_date  = EXCLUDED.latest_episode_date,
+      frequency            = EXCLUDED.frequency,
+      website_url          = EXCLUDED.website_url,
+      fetched_at           = EXCLUDED.fetched_at
+  `, [
     data.xmlurl, data.description, data.artwork, data.categories,
     data.latest_episode_title, data.latest_episode_date, data.frequency, data.website_url, data.fetched_at
-  );
+  ]);
 }
 
 function stripHtml(str) {
@@ -170,7 +174,7 @@ function extractText(val) {
 
 async function fetchPodcastMetadata(xmlurl) {
   // Return from cache if still fresh
-  const cached = getCachedPodcast(xmlurl);
+  const cached = await getCachedPodcast(xmlurl);
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
     return { ...cached, categories: JSON.parse(cached.categories || '[]') };
   }
@@ -337,7 +341,7 @@ app.post('/api/upload-opml', (req, res, next) => {
 });
 
 // Save a podcast profile and return a shareable hash
-app.post('/api/profiles', (req, res) => {
+app.post('/api/profiles', async (req, res) => {
   const { podcasts } = req.body;
   if (!Array.isArray(podcasts) || podcasts.length === 0) {
     return res.status(400).json({ error: 'podcasts must be a non-empty array' });
@@ -349,10 +353,10 @@ app.post('/api/profiles', (req, res) => {
   do {
     hash = generateHash();
     attempts++;
-  } while (hashExists(hash) && attempts < 5);
+  } while (await hashExists(hash) && attempts < 5);
 
   try {
-    saveProfile(hash, podcasts);
+    await saveProfile(hash, podcasts);
     res.json({ hash });
   } catch (err) {
     console.error('Failed to save profile:', err);
@@ -361,9 +365,9 @@ app.post('/api/profiles', (req, res) => {
 });
 
 // Retrieve a profile by hash
-app.get('/api/profiles/:hash', (req, res) => {
+app.get('/api/profiles/:hash', async (req, res) => {
   const { hash } = req.params;
-  const profile = loadProfile(hash);
+  const profile = await loadProfile(hash);
   if (!profile) {
     return res.status(404).json({ error: 'Profile not found' });
   }
@@ -371,7 +375,7 @@ app.get('/api/profiles/:hash', (req, res) => {
 });
 
 // Update a profile's name
-app.patch('/api/profiles/:hash', (req, res) => {
+app.patch('/api/profiles/:hash', async (req, res) => {
   const { hash } = req.params;
   if (!isValidHash(hash)) {
     return res.status(400).json({ error: 'Invalid profile id' });
@@ -383,7 +387,7 @@ app.patch('/api/profiles/:hash', (req, res) => {
   }
 
   const trimmed = name.trim().slice(0, 100);
-  const updated = updateProfileName(hash, trimmed);
+  const updated = await updateProfileName(hash, trimmed);
   if (!updated) {
     return res.status(404).json({ error: 'Profile not found' });
   }
@@ -404,7 +408,7 @@ app.post('/api/podcasts/enrich', async (req, res) => {
   // Return cached entries immediately; collect URLs that need live fetching
   const toFetch = [];
   for (const url of urls) {
-    const cached = getCachedPodcast(url);
+    const cached = await getCachedPodcast(url);
     if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
       results[url] = formatEnrichedMetadata(cached);
     } else {
@@ -558,9 +562,9 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientBuildPath));
 
   // Inject dynamic OpenGraph tags for shareable profile pages
-  app.get('/p/:hash', (req, res) => {
+  app.get('/p/:hash', async (req, res) => {
     const { hash } = req.params;
-    const profile = loadProfile(hash);
+    const profile = await loadProfile(hash);
     const indexPath = path.join(clientBuildPath, 'index.html');
     const html = fs.readFileSync(indexPath, 'utf8');
 
@@ -599,6 +603,13 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to initialise database:', err);
+    process.exit(1);
+  });
