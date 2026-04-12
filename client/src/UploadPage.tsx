@@ -12,6 +12,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toaster } from './toaster';
+import Footer from './Footer';
 
 interface Podcast {
   title: string;
@@ -178,6 +179,7 @@ function UploadPage() {
           </Box>
         )}
       </Stack>
+      <Footer />
     </Box>
   );
 }

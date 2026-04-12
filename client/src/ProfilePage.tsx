@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import axios from 'axios';
 import { toaster } from './toaster';
+import Footer from './Footer';
 
 interface Podcast {
   title: string;
@@ -747,6 +748,7 @@ function ProfilePage() {
           </>
         )}
       </Stack>
+      <Footer />
     </Box>
   );
 }
