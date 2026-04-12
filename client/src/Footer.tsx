@@ -8,7 +8,7 @@ function Footer() {
         <Text size="sm" c="gray.5">
           An{' '}
           <Anchor
-            href="https://unstyled.club"
+            href="https://unstyled.com"
             size="sm"
             c="gray.5"
             target="_blank"
