@@ -413,6 +413,16 @@ function ProfilePage() {
   return (
     <Box mih="100vh" bg="gray.0" py={40} px={16}>
       <Stack gap={24} maw={672} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+        <Text
+          variant="gradient"
+          gradient={{ from: 'violet', to: 'cyan' }}
+          fw={700}
+          style={{ fontSize: 20, cursor: 'pointer' }}
+          onClick={() => navigate('/')}
+        >
+          Your Podcast Personality
+        </Text>
+
         {loading && <Loader size="xl" mx="auto" />}
 
         {notFound && (
