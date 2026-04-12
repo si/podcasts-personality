@@ -99,6 +99,14 @@ function UploadPage() {
   return (
     <Box mih="100vh" bg="gray.0" py={40} px={16}>
       <Stack gap={24} maw={600} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+        <Text
+          variant="gradient"
+          gradient={{ from: 'violet', to: 'cyan' }}
+          fw={900}
+          style={{ fontSize: 42, lineHeight: 1.1 }}
+        >
+          Your Podcast Personality
+        </Text>
         <Stack gap={12}>
           <Title order={1} size="h2">What do your podcast subscriptions say about your personality?</Title>
           <Text c="gray.7">
