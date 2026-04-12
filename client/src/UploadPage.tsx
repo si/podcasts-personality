@@ -7,6 +7,7 @@ import {
   Button,
   Text,
   Loader,
+  Divider,
 } from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -96,8 +97,31 @@ function UploadPage() {
 
   return (
     <Box mih="100vh" bg="gray.0" py={40} px={16}>
-      <Stack gap={24} maw={480} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
-        <Title order={1} size="h2">Upload Your Podcast OPML</Title>
+      <Stack gap={24} maw={600} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+        <Stack gap={12}>
+          <Title order={1} size="h2">What do your podcast subscriptions say about your personality?</Title>
+          <Text c="gray.7">
+            Your listening habits reveal a lot — the topics you seek out, the voices you trust, the
+            worlds you choose to tune into. We break down your subscriptions into categories and
+            patterns to paint a picture of your podcast personality.
+          </Text>
+          <Text c="gray.7">
+            Most podcast apps let you export an <Text component="span" fw={700}>OPML file</Text> — a
+            simple list of all the feeds you follow. Export it from your app, save it to your device,
+            then share it here to get your profile.
+          </Text>
+          <Text size="sm" c="gray.5" fs="italic">
+            No AI (yet) — just simple number crunching on your subscriptions.
+          </Text>
+          <Text c="gray.7">
+            Once you have your profile, share the link with friends and compare your podcast
+            personalities.
+          </Text>
+        </Stack>
+
+        <Divider />
+
+        <Title order={2} size="h4">Upload your OPML to get started</Title>
         <FileInput
           accept=".opml,.xml"
           placeholder="Choose OPML file"
