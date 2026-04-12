@@ -1,15 +1,13 @@
 import React, { useState } from 'react';
 import {
   Box,
-  Heading,
-  VStack,
-  Input,
+  Title,
+  Stack,
+  FileInput,
   Button,
   Text,
-  ListRoot,
-  ListItem,
-  Spinner,
-} from '@chakra-ui/react';
+  Loader,
+} from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toaster } from './toaster';
@@ -27,12 +25,10 @@ function UploadPage() {
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setPodcasts([]);
-      setShareUrl(null);
-    }
+  const handleFileChange = (f: File | null) => {
+    setFile(f);
+    setPodcasts([]);
+    setShareUrl(null);
   };
 
   const handleUpload = async () => {
@@ -99,46 +95,65 @@ function UploadPage() {
   };
 
   return (
-    <Box minH="100vh" bg="gray.50" py={10} px={4}>
-      <VStack gap={8} maxW="lg" mx="auto" bg="white" p={8} borderRadius="lg" boxShadow="md">
-        <Heading as="h1" size="lg">Upload Your Podcast OPML</Heading>
-        <Input type="file" accept=".opml,.xml" onChange={handleFileChange} disabled={loading} />
-        <Button colorPalette="blue" onClick={handleUpload} loading={loading} disabled={!file || loading}>
-          Upload & Parse
+    <Box mih="100vh" bg="gray.0" py={40} px={16}>
+      <Stack gap={24} maw={480} mx="auto" bg="white" p={32} style={{ borderRadius: 12, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+        <Title order={1} size="h2">Upload Your Podcast OPML</Title>
+        <FileInput
+          accept=".opml,.xml"
+          placeholder="Choose OPML file"
+          value={file}
+          onChange={handleFileChange}
+          disabled={loading}
+        />
+        <Button
+          variant="gradient"
+          gradient={{ from: 'blue', to: 'cyan' }}
+          onClick={handleUpload}
+          loading={loading}
+          disabled={!file || loading}
+        >
+          Upload &amp; Parse
         </Button>
-        {loading && <Spinner />}
+        {loading && <Loader mx="auto" />}
         {podcasts.length > 0 && (
           <Box w="100%">
-            <Heading as="h2" size="md" mb={4}>{podcasts.length} Podcasts Found</Heading>
+            <Title order={2} size="h4" mb={16}>{podcasts.length} Podcasts Found</Title>
 
             {shareUrl ? (
-              <Box p={4} bg="green.50" borderRadius="md" border="1px solid" borderColor="green.200" mb={4}>
-                <Text fontWeight="bold" mb={2}>Your profile is ready to share:</Text>
-                <Text fontSize="sm" color="gray.600" wordBreak="break-all" mb={3}>{shareUrl}</Text>
-                <VStack gap={2} align="stretch">
-                  <Button size="sm" colorPalette="green" onClick={handleCopyUrl}>Copy Link</Button>
-                  <Button size="sm" variant="ghost" onClick={() => navigate(`/p/${shareUrl.split('/p/')[1]}`)}>
+              <Box p={16} bg="green.0" style={{ borderRadius: 8, border: '1px solid var(--mantine-color-green-3)' }} mb={16}>
+                <Text fw={700} mb={8}>Your profile is ready to share:</Text>
+                <Text size="sm" c="gray.6" style={{ wordBreak: 'break-all' }} mb={12}>{shareUrl}</Text>
+                <Stack gap={8}>
+                  <Button size="sm" variant="gradient" gradient={{ from: 'teal', to: 'lime' }} onClick={handleCopyUrl}>Copy Link</Button>
+                  <Button size="sm" variant="subtle" onClick={() => navigate(`/p/${shareUrl.split('/p/')[1]}`)}>
                     View Profile
                   </Button>
-                </VStack>
+                </Stack>
               </Box>
             ) : (
-              <Button colorPalette="green" onClick={handleSaveProfile} loading={saving} mb={4} w="100%">
+              <Button
+                variant="gradient"
+                gradient={{ from: 'teal', to: 'lime' }}
+                onClick={handleSaveProfile}
+                loading={saving}
+                mb={16}
+                fullWidth
+              >
                 Create Shareable Profile
               </Button>
             )}
 
-            <ListRoot gap={2}>
+            <Stack gap={8}>
               {podcasts.map((p, i) => (
-                <ListItem key={i}>
-                  <Text fontWeight="bold">{p.title || p.xmlurl}</Text>
-                  <Text fontSize="sm" color="gray.500">{p.xmlurl}</Text>
-                </ListItem>
+                <Box key={i}>
+                  <Text fw={700}>{p.title || p.xmlurl}</Text>
+                  <Text size="sm" c="gray.5">{p.xmlurl}</Text>
+                </Box>
               ))}
-            </ListRoot>
+            </Stack>
           </Box>
         )}
-      </VStack>
+      </Stack>
     </Box>
   );
 }
