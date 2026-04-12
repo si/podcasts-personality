@@ -556,6 +556,43 @@ Return a JSON object with this exact structure:
 if (process.env.NODE_ENV === 'production') {
   const clientBuildPath = path.join(__dirname, 'client', 'build');
   app.use(express.static(clientBuildPath));
+
+  // Inject dynamic OpenGraph tags for shareable profile pages
+  app.get('/p/:hash', (req, res) => {
+    const { hash } = req.params;
+    const profile = loadProfile(hash);
+    const indexPath = path.join(clientBuildPath, 'index.html');
+    const html = fs.readFileSync(indexPath, 'utf8');
+
+    let title = 'Podcast Personality';
+    let description = 'Discover what your podcast subscriptions say about your personality.';
+
+    if (profile) {
+      const displayName = profile.name ? profile.name : 'Someone';
+      const podcastCount = profile.podcasts.length;
+      title = profile.name ? `${profile.name}'s Podcast Profile` : 'A Podcast Personality Profile';
+      description = `${displayName} listens to ${podcastCount} podcast${podcastCount !== 1 ? 's' : ''}. See their personality profile and what their listening taste reveals about them.`;
+    }
+
+    const escape = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const injected = html.replace(
+      '<meta property="og:title" content="Podcast Personality" />',
+      `<meta property="og:title" content="${escape(title)}" />\n    <meta property="og:description" content="${escape(description)}" />`,
+    ).replace(
+      '<meta property="og:description" content="Discover what your podcast subscriptions say about your personality." />',
+      '',
+    ).replace(
+      '<meta name="description" content="Discover what your podcast subscriptions say about your personality. Upload your OPML and get an instant profile." />',
+      `<meta name="description" content="${escape(description)}" />`,
+    ).replace(
+      '<title>Podcast Personality</title>',
+      `<title>${escape(title)}</title>`,
+    );
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(injected);
+  });
+
   app.get('*', (req, res) => {
     res.sendFile(path.join(clientBuildPath, 'index.html'));
   });

@@ -434,32 +434,34 @@ function ProfilePage() {
               {profile.name ? `${profile.name}'s Profile` : 'Podcast Profile'}
             </Text>
 
-            {/* Name form */}
-            <Box w="100%" p={16} bg="gray.0" style={{ borderRadius: 8 }}>
-              <Text size="sm" fw={600} mb={8} c="gray.6">
-                {profile.name ? 'Your name' : 'Set your name'}
-              </Text>
-              <Group>
-                <TextInput
-                  value={nameInput}
-                  onChange={e => setNameInput(e.target.value)}
-                  placeholder="Enter your name"
-                  size="sm"
-                  style={{ flex: 1 }}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveName()}
-                />
-                <Button
-                  size="sm"
-                  variant="gradient"
-                  gradient={{ from: 'blue', to: 'cyan' }}
-                  onClick={handleSaveName}
-                  loading={savingName}
-                  disabled={!nameInput.trim() || savingName}
-                >
-                  Save
-                </Button>
-              </Group>
-            </Box>
+            {/* Name form — only shown until a name has been saved */}
+            {!profile.name && (
+              <Box w="100%" p={16} bg="gray.0" style={{ borderRadius: 8 }}>
+                <Text size="sm" fw={600} mb={8} c="gray.6">
+                  Set your name
+                </Text>
+                <Group>
+                  <TextInput
+                    value={nameInput}
+                    onChange={e => setNameInput(e.target.value)}
+                    placeholder="Enter your name"
+                    size="sm"
+                    style={{ flex: 1 }}
+                    onKeyDown={e => e.key === 'Enter' && handleSaveName()}
+                  />
+                  <Button
+                    size="sm"
+                    variant="gradient"
+                    gradient={{ from: 'blue', to: 'cyan' }}
+                    onClick={handleSaveName}
+                    loading={savingName}
+                    disabled={!nameInput.trim() || savingName}
+                  >
+                    Save
+                  </Button>
+                </Group>
+              </Box>
+            )}
 
             <Group w="100%" justify="space-between" align="center">
               <Text c="gray.5">{profile.podcasts.length} podcasts</Text>
