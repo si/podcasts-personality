@@ -59,6 +59,8 @@ async function initDb() {
       website_url          TEXT
     )
   `);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'opml'`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS spotify_user_id TEXT`);
 }
 
 // Validate hash to prevent path traversal / SQL injection via param
@@ -70,6 +72,20 @@ function generateHash() {
   return crypto.randomBytes(6).toString('base64url');
 }
 
+// ---- Spotify OAuth state (CSRF protection) ----
+const oauthStateMap = new Map();
+
+function generateOAuthState() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function validateAndConsumeState(state) {
+  if (!oauthStateMap.has(state)) return false;
+  const expiry = oauthStateMap.get(state);
+  oauthStateMap.delete(state);
+  return Date.now() < expiry;
+}
+
 async function hashExists(hash) {
   const { rows } = await pool.query('SELECT 1 FROM profiles WHERE hash = $1', [hash]);
   return rows.length > 0;
@@ -79,6 +95,13 @@ async function saveProfile(hash, podcasts) {
   await pool.query(
     'INSERT INTO profiles (hash, podcasts, created_at) VALUES ($1, $2, $3)',
     [hash, JSON.stringify(podcasts), new Date().toISOString()]
+  );
+}
+
+async function saveSpotifyProfile(hash, podcasts, spotifyUserId, displayName) {
+  await pool.query(
+    'INSERT INTO profiles (hash, name, podcasts, created_at, source, spotify_user_id) VALUES ($1, $2, $3, $4, $5, $6)',
+    [hash, displayName || null, JSON.stringify(podcasts), new Date().toISOString(), 'spotify', spotifyUserId || null]
   );
 }
 
@@ -172,7 +195,92 @@ function extractText(val) {
   return String(val);
 }
 
+// ---- Spotify helpers ----
+
+const SPOTIFY_KEYWORD_CATEGORY_MAP = {
+  'tech': 'Technology', 'software': 'Technology', 'coding': 'Technology', 'developer': 'Technology',
+  'artificial intelligence': 'Technology', ' ai ': 'Technology',
+  'startup': 'Entrepreneurship', 'entrepreneur': 'Entrepreneurship',
+  'business': 'Business', 'management': 'Management', 'marketing': 'Marketing',
+  'invest': 'Investing', 'finance': 'Finance', 'money': 'Personal Finance', 'econom': 'Business',
+  'news': 'News', 'politic': 'Politics', 'government': 'Government',
+  'science': 'Science', 'research': 'Science', 'physics': 'Science', 'biology': 'Science',
+  'history': 'History', 'histori': 'History',
+  'true crime': 'True Crime', 'crime': 'True Crime', 'murder': 'True Crime', 'detective': 'True Crime',
+  'comedy': 'Comedy', 'humor': 'Comedy', 'laugh': 'Comedy',
+  'health': 'Health & Fitness', 'fitness': 'Health & Fitness', 'wellness': 'Health & Fitness',
+  'mental health': 'Mental Health', 'anxiety': 'Mental Health', 'therapy': 'Mental Health', 'mindful': 'Mental Health',
+  'sport': 'Sports', 'football': 'Sports', 'basketball': 'Sports', 'soccer': 'Sports', 'cricket': 'Sports',
+  'music': 'Music', 'musician': 'Music',
+  'film': 'TV & Film', 'movie': 'TV & Film', 'cinema': 'TV & Film', 'television': 'TV & Film',
+  'education': 'Education', 'learn': 'Education', 'teach': 'Education',
+  'philosophy': 'Philosophy',
+  'religion': 'Religion & Spirituality', 'spiritual': 'Religion & Spirituality', 'faith': 'Religion & Spirituality',
+  'fiction': 'Fiction', 'story': 'Fiction', 'narrative': 'Fiction', 'horror': 'Fiction',
+  'society': 'Society & Culture', 'culture': 'Society & Culture',
+  'interview': 'Interviews',
+  'travel': 'Travel', 'adventure': 'Travel',
+  'food': 'Food', 'cooking': 'Food', 'recipe': 'Food',
+  'game': 'Leisure', 'gaming': 'Leisure', 'video game': 'Leisure',
+  'kids': 'Kids & Family', 'family': 'Kids & Family', 'parent': 'Kids & Family',
+  'personal': 'Personal Journals',
+  'design': 'Design', 'art': 'Arts', 'creative': 'Arts',
+  'environment': 'Environment', 'climate': 'Environment', 'nature': 'Environment',
+};
+
+function inferCategoriesFromTitle(name, description) {
+  const text = ((name || '') + ' ' + (description || '')).toLowerCase();
+  const found = new Set();
+  for (const [keyword, category] of Object.entries(SPOTIFY_KEYWORD_CATEGORY_MAP)) {
+    if (text.includes(keyword)) found.add(category);
+  }
+  return [...found].slice(0, 3);
+}
+
+async function fetchAllSpotifyShows(accessToken) {
+  const shows = [];
+  let url = 'https://api.spotify.com/v1/me/shows?limit=50';
+  const MAX_PAGES = 10;
+  let page = 0;
+  while (url && page < MAX_PAGES) {
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+    if (!res.ok) throw new Error(`Spotify shows API error: ${res.status}`);
+    const data = await res.json();
+    for (const item of (data.items || [])) {
+      if (item?.show?.media_type === 'podcast') shows.push(item.show);
+    }
+    url = data.next || null;
+    page++;
+  }
+  return shows;
+}
+
+async function fetchSpotifyShowFrequency(showId, accessToken) {
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/shows/${encodeURIComponent(showId)}/episodes?limit=6`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return 'unknown';
+    const data = await res.json();
+    const episodes = (data.items || [])
+      .filter(ep => ep.release_date_precision === 'day' && ep.release_date)
+      .map(ep => ({ date: new Date(ep.release_date) }))
+      .filter(ep => !isNaN(ep.date.getTime()))
+      .sort((a, b) => b.date - a.date);
+    return calculateFrequency(episodes);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function fetchPodcastMetadata(xmlurl) {
+  // Spotify show URIs never have an HTTP feed — return pre-populated cache or stub
+  if (xmlurl.startsWith('spotify:')) {
+    const cached = await getCachedPodcast(xmlurl);
+    if (cached) return { ...cached, categories: JSON.parse(cached.categories || '[]') };
+    return { xmlurl, description: null, artwork: null, categories: [], latest_episode_title: null, latest_episode_date: null, frequency: 'unknown', website_url: null, fetched_at: new Date().toISOString() };
+  }
+
   // Return from cache if still fresh
   const cached = await getCachedPodcast(xmlurl);
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
@@ -553,6 +661,120 @@ Return a JSON object with this exact structure:
   } catch (err) {
     console.error('Personality analysis failed:', err.message);
     res.status(500).json({ error: 'AI analysis failed: ' + err.message });
+  }
+});
+
+// Spotify OAuth — initiate flow
+app.get('/auth/spotify', (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || '';
+  if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET || !process.env.SPOTIFY_REDIRECT_URI) {
+    return res.redirect(`${frontendUrl}/?error=spotify_not_configured`);
+  }
+  // Prune expired states to keep map small
+  const now = Date.now();
+  for (const [k, v] of oauthStateMap) {
+    if (v < now) oauthStateMap.delete(k);
+  }
+  const state = generateOAuthState();
+  oauthStateMap.set(state, now + 10 * 60 * 1000);
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: process.env.SPOTIFY_CLIENT_ID,
+    redirect_uri: process.env.SPOTIFY_REDIRECT_URI,
+    scope: 'user-library-read',
+    state,
+  });
+  res.redirect(`https://accounts.spotify.com/authorize?${params}`);
+});
+
+// Spotify OAuth — callback
+app.get('/auth/spotify/callback', async (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || '';
+  const { code, state, error } = req.query;
+
+  if (error === 'access_denied') {
+    return res.redirect(`${frontendUrl}/`);
+  }
+
+  if (!state || !validateAndConsumeState(state)) {
+    return res.status(400).send('Invalid OAuth state. Please try again.');
+  }
+
+  try {
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+    const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
+    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+    // Exchange authorization code for access token
+    const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }),
+    });
+    if (!tokenRes.ok) throw new Error(`Token exchange failed: ${tokenRes.status}`);
+    const { access_token: accessToken } = await tokenRes.json();
+
+    // Get Spotify user identity for default profile name
+    const meRes = await fetch('https://api.spotify.com/v1/me', {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+    const me = meRes.ok ? await meRes.json() : {};
+    const spotifyUserId = me.id || null;
+    const displayName = me.display_name || null;
+
+    // Fetch all followed podcast shows (paginated)
+    const shows = await fetchAllSpotifyShows(accessToken);
+    if (shows.length === 0) {
+      return res.redirect(`${frontendUrl}/?error=no_spotify_podcasts`);
+    }
+
+    // Fetch episode frequency for each show (max 10 concurrent)
+    const frequencies = {};
+    const CONCURRENCY = 10;
+    for (let i = 0; i < shows.length; i += CONCURRENCY) {
+      const batch = shows.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(batch.map(async (show) => {
+        frequencies[show.id] = await fetchSpotifyShowFrequency(show.id, accessToken);
+      }));
+    }
+
+    // Pre-populate podcast_cache with Spotify metadata
+    await Promise.allSettled(shows.map(async (show) => {
+      await savePodcastCache({
+        xmlurl: `spotify:show:${show.id}`,
+        description: stripHtml(show.description || '').slice(0, 500),
+        artwork: show.images?.[0]?.url || null,
+        categories: JSON.stringify(inferCategoriesFromTitle(show.name, show.description)),
+        latest_episode_title: null,
+        latest_episode_date: null,
+        frequency: frequencies[show.id] || 'unknown',
+        website_url: show.external_urls?.spotify || null,
+        fetched_at: new Date().toISOString(),
+      });
+    }));
+
+    // Build podcast list and save profile
+    const podcasts = shows.map(show => ({
+      title: show.name || show.publisher || 'Unknown Podcast',
+      xmlurl: `spotify:show:${show.id}`,
+    }));
+
+    let hash;
+    let attempts = 0;
+    do {
+      hash = generateHash();
+      attempts++;
+    } while (await hashExists(hash) && attempts < 5);
+
+    await saveSpotifyProfile(hash, podcasts, spotifyUserId, displayName);
+    res.redirect(`${frontendUrl}/p/${hash}`);
+  } catch (err) {
+    console.error('Spotify OAuth callback failed:', err.message);
+    res.redirect(`${process.env.FRONTEND_URL || ''}/?error=spotify_failed`);
   }
 });
 
