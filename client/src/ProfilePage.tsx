@@ -684,10 +684,10 @@ function ProfilePage() {
                             <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
                               {href ? (
                                 <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                                  {p.title || p.xmlurl}
+                                  {p.title || 'Unknown Podcast'}
                                 </a>
                               ) : (
-                                p.title || p.xmlurl
+                                p.title || 'Unknown Podcast'
                               )}
                             </Text>
                             {meta?.frequency && meta.frequency !== 'unknown' && (
@@ -740,8 +740,8 @@ function ProfilePage() {
                             </Text>
                           )}
 
-                          {/* Feed URL (shown when no description loaded yet) */}
-                          {!meta?.description && (
+                          {/* Feed URL (shown when no description loaded yet, hidden for Spotify URIs) */}
+                          {!meta?.description && !p.xmlurl.startsWith('spotify:') && (
                             <Text size="xs" c="gray.4" mt={4} style={{ overflowWrap: 'anywhere' }}>
                               {p.xmlurl}
                             </Text>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Title,
@@ -9,7 +9,7 @@ import {
   Loader,
   Divider,
 } from '@mantine/core';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { toaster } from './toaster';
 import Footer from './Footer';
@@ -21,11 +21,24 @@ interface Podcast {
 
 function UploadPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const err = params.get('error');
+    if (err === 'spotify_failed') {
+      toaster.create({ title: 'Spotify connection failed', description: 'Something went wrong. Please try again.', type: 'error', duration: 4000 });
+    } else if (err === 'no_spotify_podcasts') {
+      toaster.create({ title: 'No podcasts found', description: "You don't appear to follow any podcasts on Spotify yet.", type: 'warning', duration: 4000 });
+    } else if (err === 'spotify_not_configured') {
+      toaster.create({ title: 'Spotify not available', description: 'Spotify integration is not configured on this server.', type: 'error', duration: 4000 });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFileChange = (f: File | null) => {
     setFile(f);
@@ -148,6 +161,22 @@ function UploadPage() {
           Upload &amp; Parse
         </Button>
         {loading && <Loader mx="auto" />}
+
+        <Divider label="or" labelPosition="center" />
+
+        <Stack gap={8}>
+          <Title order={2} size="h4">Connect Spotify</Title>
+          <Text c="gray.7">
+            Instantly import your followed podcasts from Spotify. No file export needed — we'll read your podcast library directly and build your profile.
+          </Text>
+          <Button
+            variant="filled"
+            color="green"
+            onClick={() => { window.location.href = '/auth/spotify'; }}
+          >
+            Connect with Spotify
+          </Button>
+        </Stack>
         {podcasts.length > 0 && (
           <Box w="100%">
             <Title order={2} size="h4" mb={16}>{podcasts.length} Podcasts Found</Title>
