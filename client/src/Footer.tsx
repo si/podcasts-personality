@@ -38,7 +38,15 @@ function Footer() {
           GitHub
         </Anchor>
         <Text size="sm" c="gray.3">·</Text>
-        <Text size="sm" c="gray.5">Hosted on Railway</Text>
+        <Anchor
+          href="https://railway.com?referralCode=HgqUac"
+          size="sm"
+          c="gray.5"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Build your own apps with my Railway referral
+        </Anchor>
         <Text size="sm" c="gray.3">·</Text>
         <Text size="sm" c="gray.5">Built with Claude Code</Text>
       </Group>
@@ -47,3 +55,4 @@ function Footer() {
 }
 
 export default Footer;
+
