@@ -10,6 +10,7 @@ import {
   Loader,
   Button,
   TextInput,
+  SegmentedControl,
 } from '@mantine/core';
 import axios from 'axios';
 import { toaster } from './toaster';
@@ -251,6 +252,125 @@ function ProgressBar({ ratio, color }: { ratio: number; color: string }) {
   );
 }
 
+const PIE_COLORS = [
+  '#7C3AED', '#2563EB', '#059669', '#D97706', '#DC2626',
+  '#DB2777', '#0E7490', '#4338CA', '#65A30D', '#6B7280',
+];
+
+function polarToXY(cx: number, cy: number, r: number, angle: number) {
+  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+}
+
+function donutSegmentPath(cx: number, cy: number, r: number, ir: number, start: number, end: number) {
+  const o1 = polarToXY(cx, cy, r, start);
+  const o2 = polarToXY(cx, cy, r, end);
+  const i1 = polarToXY(cx, cy, ir, end);
+  const i2 = polarToXY(cx, cy, ir, start);
+  const large = (end - start) > Math.PI ? 1 : 0;
+  return [
+    `M ${o1.x} ${o1.y}`,
+    `A ${r} ${r} 0 ${large} 1 ${o2.x} ${o2.y}`,
+    `L ${i1.x} ${i1.y}`,
+    `A ${ir} ${ir} 0 ${large} 0 ${i2.x} ${i2.y}`,
+    'Z',
+  ].join(' ');
+}
+
+function SvgPieChart({ data }: { data: { category: string; count: number; ratio: number }[] }) {
+  const size = 200;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 88;
+  const ir = 38;
+
+  const top = data.slice(0, 8);
+  const otherRatio = data.slice(8).reduce((s, d) => s + d.ratio, 0);
+  const otherCount = data.slice(8).reduce((s, d) => s + d.count, 0);
+  const chartData = otherRatio > 0.01
+    ? [...top, { category: 'Other', count: otherCount, ratio: otherRatio }]
+    : top;
+
+  let angle = -Math.PI / 2;
+  const segments = chartData.map((d, i) => {
+    const sweep = d.ratio * 2 * Math.PI;
+    const start = angle;
+    angle += sweep;
+    return { ...d, path: donutSegmentPath(cx, cy, r, ir, start, angle), color: PIE_COLORS[i % PIE_COLORS.length] };
+  });
+
+  return (
+    <Box>
+      <svg width="100%" viewBox={`0 0 ${size} ${size}`} style={{ display: 'block', maxWidth: 220, margin: '0 auto' }}>
+        {segments.map((seg, i) => (
+          <path key={i} d={seg.path} fill={seg.color} stroke="white" strokeWidth={1.5} />
+        ))}
+      </svg>
+      <Stack gap={4} mt={12}>
+        {segments.map((seg, i) => (
+          <Group key={i} gap={8} align="center" wrap="nowrap">
+            <Box style={{ width: 10, height: 10, background: seg.color, borderRadius: 2, flexShrink: 0 }} />
+            <Text size="sm" style={{ flex: 1 }}>{getCategoryEmoji(seg.category)} {seg.category}</Text>
+            <Text size="xs" c="gray.5" fw={500}>{Math.round(seg.ratio * 100)}%</Text>
+          </Group>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
+function ThumbnailGallery({
+  podcasts,
+  enriched,
+  topCategories,
+}: {
+  podcasts: Podcast[];
+  enriched: Record<string, PodcastMetadata | null>;
+  topCategories: string[];
+}) {
+  const grouped: Record<string, Array<{ title: string; artwork: string }>> = {};
+  for (const cat of [...topCategories, 'Other']) grouped[cat] = [];
+
+  for (const p of podcasts) {
+    const meta = enriched[p.xmlurl];
+    if (!meta?.artwork) continue;
+    const primaryCat = meta.categories[0];
+    const target = topCategories.includes(primaryCat) ? primaryCat : 'Other';
+    grouped[target].push({ title: p.title, artwork: meta.artwork });
+  }
+
+  const visible = [...topCategories, 'Other'].filter(cat => grouped[cat].length > 0);
+  if (visible.length === 0) return null;
+
+  return (
+    <Box mt={16} pt={14} style={{ borderTop: '1px solid var(--mantine-color-gray-1)' }}>
+      <Text size="xs" fw={600} c="gray.4" mb={10} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+        Artwork by Category
+      </Text>
+      <Stack gap={10}>
+        {visible.map(cat => (
+          <Box key={cat}>
+            <Text size="xs" fw={600} c="gray.6" mb={5}>{getCategoryEmoji(cat)} {cat}</Text>
+            <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {grouped[cat].map(({ title, artwork }, i) => (
+                <img
+                  key={i}
+                  src={artwork}
+                  alt={title}
+                  title={title}
+                  width={36}
+                  height={36}
+                  style={{ borderRadius: 5, objectFit: 'cover', display: 'block' }}
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              ))}
+            </Box>
+          </Box>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 function ProfilePage() {
   const { hash } = useParams<{ hash: string }>();
   const navigate = useNavigate();
@@ -266,6 +386,7 @@ function ProfilePage() {
 
   const [personality, setPersonality] = useState<PersonalityAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [contentView, setContentView] = useState<'progress' | 'pie' | 'podcasts'>('progress');
 
   const sortedPodcasts = useMemo(() => {
     if (!profile) return [];
@@ -310,6 +431,11 @@ function ProfilePage() {
       return sum + (FREQUENCY_WEEKLY_RATE[freq] ?? 0) * count;
     }, 0);
   }, [frequencyDistribution]);
+
+  const topCategoriesForGallery = useMemo(
+    () => categoryRatios.slice(0, 8).map(c => c.category),
+    [categoryRatios],
+  );
 
   useEffect(() => {
     axios.get(`/api/profiles/${hash}`)
@@ -406,6 +532,15 @@ function ProfilePage() {
       await navigator.clipboard.writeText(url);
       toaster.create({ title: 'Link copied!', type: 'success', duration: 1500 });
     }
+  };
+
+  const handleDownloadOpml = () => {
+    const link = document.createElement('a');
+    link.href = `/api/profiles/${hash}/opml`;
+    link.download = 'podcasts.opml';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const showAnalysisPanel = !enriching && (categoryRatios.length > 0 || Object.keys(frequencyDistribution).length > 0);
@@ -533,33 +668,128 @@ function ProfilePage() {
                       </Box>
                     )}
 
-                    {/* ── Category breakdown ── */}
+                    {/* ── Content Mix (Progress / Pie / Podcasts tabs) ── */}
                     {categoryRatios.length > 0 && (
                       <Box>
-                        <Text fw={600} size="sm" c="gray.6" mb={12}>
-                          📊 Content Mix
-                        </Text>
-                        <Stack gap={8}>
-                          {categoryRatios.slice(0, 8).map(({ category, count, ratio }) => (
-                            <Box key={category}>
-                              <Group justify="space-between" mb={4}>
-                                <Text size="sm">
-                                  {getCategoryEmoji(category)} {category}
-                                </Text>
-                                <Text size="xs" c="gray.5" fw={500}>
-                                  {Math.round(ratio * 100)}%{' '}
-                                  <Text component="span" c="gray.4">({count})</Text>
-                                </Text>
-                              </Group>
-                              <ProgressBar ratio={ratio} color="var(--mantine-color-blue-4)" />
-                            </Box>
-                          ))}
-                          {categoryRatios.length > 8 && (
-                            <Text size="xs" c="gray.4">
-                              +{categoryRatios.length - 8} more categories
-                            </Text>
-                          )}
-                        </Stack>
+                        <Group justify="space-between" align="center" mb={12}>
+                          <Text fw={600} size="sm" c="gray.6">📊 Content Mix</Text>
+                          <SegmentedControl
+                            size="xs"
+                            value={contentView}
+                            onChange={(v) => setContentView(v as 'progress' | 'pie' | 'podcasts')}
+                            data={[
+                              { label: 'Progress', value: 'progress' },
+                              { label: 'Pie', value: 'pie' },
+                              { label: 'Podcasts', value: 'podcasts' },
+                            ]}
+                          />
+                        </Group>
+
+                        {contentView === 'progress' && (
+                          <>
+                            <Stack gap={8}>
+                              {categoryRatios.slice(0, 8).map(({ category, count, ratio }) => (
+                                <Box key={category}>
+                                  <Group justify="space-between" mb={4}>
+                                    <Text size="sm">{getCategoryEmoji(category)} {category}</Text>
+                                    <Text size="xs" c="gray.5" fw={500}>
+                                      {Math.round(ratio * 100)}%{' '}
+                                      <Text component="span" c="gray.4">({count})</Text>
+                                    </Text>
+                                  </Group>
+                                  <ProgressBar ratio={ratio} color="var(--mantine-color-blue-4)" />
+                                </Box>
+                              ))}
+                              {categoryRatios.length > 8 && (
+                                <Text size="xs" c="gray.4">+{categoryRatios.length - 8} more categories</Text>
+                              )}
+                            </Stack>
+                            <ThumbnailGallery
+                              podcasts={sortedPodcasts}
+                              enriched={enriched}
+                              topCategories={topCategoriesForGallery}
+                            />
+                          </>
+                        )}
+
+                        {contentView === 'pie' && (
+                          <>
+                            <SvgPieChart data={categoryRatios} />
+                            <ThumbnailGallery
+                              podcasts={sortedPodcasts}
+                              enriched={enriched}
+                              topCategories={topCategoriesForGallery}
+                            />
+                          </>
+                        )}
+
+                        {contentView === 'podcasts' && (
+                          <Box>
+                            <Stack gap={16}>
+                              {sortedPodcasts.map((p, i) => {
+                                const meta = enriched[p.xmlurl];
+                                const href = meta?.websiteUrl || undefined;
+                                return (
+                                  <Box key={i}>
+                                    <Group gap={12} align="flex-start">
+                                      {meta?.artwork && (
+                                        <Box style={{ flexShrink: 0 }}>
+                                          {href ? (
+                                            <a href={href} target="_blank" rel="noopener noreferrer">
+                                              <img src={meta.artwork} alt="" width={64} height={64} style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                            </a>
+                                          ) : (
+                                            <img src={meta.artwork} alt="" width={64} height={64} style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                          )}
+                                        </Box>
+                                      )}
+                                      <Box style={{ flex: 1, minWidth: 0 }}>
+                                        <Group justify="space-between" align="flex-start" gap={8}>
+                                          <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
+                                            {href ? (
+                                              <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>{p.title || p.xmlurl}</a>
+                                            ) : (
+                                              p.title || p.xmlurl
+                                            )}
+                                          </Text>
+                                          {meta?.frequency && meta.frequency !== 'unknown' && (
+                                            <Badge color={FREQUENCY_COLOR[meta.frequency] ?? 'gray'} variant="light" size="sm" style={{ flexShrink: 0 }}>
+                                              {FREQUENCY_LABEL[meta.frequency] ?? meta.frequency}
+                                            </Badge>
+                                          )}
+                                        </Group>
+                                        {meta?.description && (
+                                          <Text size="sm" c="gray.6" mt={4} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as React.CSSProperties}>
+                                            {meta.description}
+                                          </Text>
+                                        )}
+                                        {meta?.categories && meta.categories.length > 0 && (
+                                          <Group gap={4} mt={4} wrap="wrap">
+                                            {meta.categories.slice(0, 3).map((cat, ci) => (
+                                              <Badge key={ci} color="blue" variant="outline" size="sm">{cat}</Badge>
+                                            ))}
+                                          </Group>
+                                        )}
+                                        {meta?.latestEpisode?.title && (
+                                          <Text size="xs" c="gray.4" mt={4} truncate="end">
+                                            Latest: {meta.latestEpisode.title}
+                                            {meta.latestEpisode.date && <> · {formatRelativeDate(meta.latestEpisode.date)}</>}
+                                          </Text>
+                                        )}
+                                        {!meta?.description && (
+                                          <Text size="xs" c="gray.4" mt={4} style={{ overflowWrap: 'anywhere' }}>{p.xmlurl}</Text>
+                                        )}
+                                      </Box>
+                                    </Group>
+                                  </Box>
+                                );
+                              })}
+                            </Stack>
+                            <Button mt={20} variant="outline" color="blue" onClick={handleDownloadOpml} fullWidth size="sm">
+                              ⬇ Download OPML File
+                            </Button>
+                          </Box>
+                        )}
                       </Box>
                     )}
 
@@ -641,118 +871,6 @@ function ProfilePage() {
                 </Box>
               </Box>
             )}
-
-            {/* ── Podcast list ── */}
-            <Box w="100%">
-              <Stack gap={16}>
-                {sortedPodcasts.map((p, i) => {
-                  const meta = enriched[p.xmlurl];
-                  const href = meta?.websiteUrl || undefined;
-                  return (
-                    <Box key={i}>
-                      <Group gap={12} align="flex-start">
-                        {/* Artwork */}
-                        {meta?.artwork && (
-                          <Box style={{ flexShrink: 0 }}>
-                            {href ? (
-                              <a href={href} target="_blank" rel="noopener noreferrer">
-                                <img
-                                  src={meta.artwork}
-                                  alt=""
-                                  width={64}
-                                  height={64}
-                                  style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
-                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                />
-                              </a>
-                            ) : (
-                              <img
-                                src={meta.artwork}
-                                alt=""
-                                width={64}
-                                height={64}
-                                style={{ borderRadius: 8, objectFit: 'cover', display: 'block' }}
-                                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                              />
-                            )}
-                          </Box>
-                        )}
-
-                        <Box style={{ flex: 1, minWidth: 0 }}>
-                          {/* Title + frequency badge */}
-                          <Group justify="space-between" align="flex-start" gap={8}>
-                            <Text fw={700} style={{ overflowWrap: 'anywhere' }}>
-                              {href ? (
-                                <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                                  {p.title || p.xmlurl}
-                                </a>
-                              ) : (
-                                p.title || p.xmlurl
-                              )}
-                            </Text>
-                            {meta?.frequency && meta.frequency !== 'unknown' && (
-                              <Badge
-                                color={FREQUENCY_COLOR[meta.frequency] ?? 'gray'}
-                                variant="light"
-                                size="sm"
-                                style={{ flexShrink: 0 }}
-                              >
-                                {FREQUENCY_LABEL[meta.frequency] ?? meta.frequency}
-                              </Badge>
-                            )}
-                          </Group>
-
-                          {/* Description */}
-                          {meta?.description && (
-                            <Text
-                              size="sm"
-                              c="gray.6"
-                              mt={4}
-                              style={{
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                              } as React.CSSProperties}
-                            >
-                              {meta.description}
-                            </Text>
-                          )}
-
-                          {/* Categories */}
-                          {meta?.categories && meta.categories.length > 0 && (
-                            <Group gap={4} mt={4} wrap="wrap">
-                              {meta.categories.slice(0, 3).map((cat, ci) => (
-                                <Badge key={ci} color="blue" variant="outline" size="sm">
-                                  {cat}
-                                </Badge>
-                              ))}
-                            </Group>
-                          )}
-
-                          {/* Latest episode */}
-                          {meta?.latestEpisode?.title && (
-                            <Text size="xs" c="gray.4" mt={4} truncate="end">
-                              Latest: {meta.latestEpisode.title}
-                              {meta.latestEpisode.date && (
-                                <> · {formatRelativeDate(meta.latestEpisode.date)}</>
-                              )}
-                            </Text>
-                          )}
-
-                          {/* Feed URL (shown when no description loaded yet) */}
-                          {!meta?.description && (
-                            <Text size="xs" c="gray.4" mt={4} style={{ overflowWrap: 'anywhere' }}>
-                              {p.xmlurl}
-                            </Text>
-                          )}
-                        </Box>
-                      </Group>
-                    </Box>
-                  );
-                })}
-              </Stack>
-            </Box>
 
             <Button variant="subtle" onClick={() => navigate('/')}>Create Your Own Profile</Button>
           </>

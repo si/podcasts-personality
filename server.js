@@ -395,6 +395,54 @@ app.patch('/api/profiles/:hash', async (req, res) => {
   res.json({ name: trimmed });
 });
 
+// Download OPML file for a profile
+app.get('/api/profiles/:hash/opml', async (req, res) => {
+  const { hash } = req.params;
+  if (!isValidHash(hash)) {
+    return res.status(400).json({ error: 'Invalid profile id' });
+  }
+
+  const profile = await loadProfile(hash);
+  if (!profile) {
+    return res.status(404).json({ error: 'Profile not found' });
+  }
+
+  function escXml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  const title = profile.name ? `${profile.name}'s Podcasts` : 'Podcast Subscriptions';
+  const outlines = profile.podcasts
+    .map(p => `      <outline type="rss" text="${escXml(p.title)}" title="${escXml(p.title)}" xmlUrl="${escXml(p.xmlurl)}"/>`)
+    .join('\n');
+
+  const opml = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="1.0">
+  <head>
+    <title>${escXml(title)}</title>
+    <dateCreated>${new Date().toUTCString()}</dateCreated>
+  </head>
+  <body>
+    <outline text="Podcasts" title="Podcasts">
+${outlines}
+    </outline>
+  </body>
+</opml>`;
+
+  const filename = profile.name
+    ? `${profile.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-podcasts.opml`
+    : 'podcasts.opml';
+
+  res.set('Content-Type', 'text/x-opml; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(opml);
+});
+
 // Enrich podcast metadata (with 24-hour cache per feed URL)
 app.post('/api/podcasts/enrich', async (req, res) => {
   const { xmlurls } = req.body;
