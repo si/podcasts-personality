@@ -103,6 +103,26 @@ async function updateProfileName(hash, name) {
   return rowCount > 0;
 }
 
+async function loadAllProfiles() {
+  const { rows } = await pool.query('SELECT * FROM profiles ORDER BY created_at DESC');
+  return rows.map(row => ({
+    hash: row.hash,
+    name: row.name || null,
+    podcasts: JSON.parse(row.podcasts),
+    created_at: row.created_at,
+  }));
+}
+
+function escapeXml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 // ---- Podcast metadata cache ----
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -553,6 +573,50 @@ Return a JSON object with this exact structure:
   } catch (err) {
     console.error('Personality analysis failed:', err.message);
     res.status(500).json({ error: 'AI analysis failed: ' + err.message });
+  }
+});
+
+// RSS feed of all profiles
+app.get('/rss.xml', async (req, res) => {
+  try {
+    const profiles = await loadAllProfiles();
+    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const buildDate = new Date().toUTCString();
+
+    const items = profiles.map(profile => {
+      const title = profile.name ? `${profile.name}'s Podcast Profile` : 'Podcast Personality Profile';
+      const link = `${baseUrl}/p/${profile.hash}`;
+      const pubDate = new Date(profile.created_at).toUTCString();
+      const podcastListHtml = profile.podcasts
+        .map(p => `<li>${(p.title || p.xmlurl).replace(/]]>/g, ']]]]><![CDATA[>')}</li>`)
+        .join('');
+      const descriptionCdata = `<![CDATA[<p>${profile.podcasts.length} podcast${profile.podcasts.length !== 1 ? 's' : ''}:</p><ul>${podcastListHtml}</ul>]]>`;
+
+      return `    <item>
+      <title>${escapeXml(title)}</title>
+      <link>${escapeXml(link)}</link>
+      <guid isPermaLink="true">${escapeXml(link)}</guid>
+      <pubDate>${pubDate}</pubDate>
+      <description>${descriptionCdata}</description>
+    </item>`;
+    }).join('\n');
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Podcast Personality Profiles</title>
+    <link>${escapeXml(baseUrl)}</link>
+    <description>Recently created podcast personality profiles</description>
+    <lastBuildDate>${buildDate}</lastBuildDate>
+${items}
+  </channel>
+</rss>`;
+
+    res.setHeader('Content-Type', 'application/rss+xml; charset=UTF-8');
+    res.send(xml);
+  } catch (err) {
+    console.error('RSS feed generation failed:', err);
+    res.status(500).send('Failed to generate RSS feed');
   }
 });
 
