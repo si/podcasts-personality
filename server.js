@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns').promises;
 const OPMLParser = require('opmlparser');
 const { Pool } = require('pg');
 const { XMLParser } = require('fast-xml-parser');
@@ -59,6 +60,13 @@ async function initDb() {
       website_url          TEXT
     )
   `);
+  // Social verification columns — safe to run against existing databases
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bluesky_handle TEXT`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS mastodon_handle TEXT`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS verified_domain TEXT`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS bluesky_verified BOOLEAN DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS mastodon_verified BOOLEAN DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS domain_verified BOOLEAN DEFAULT FALSE`);
 }
 
 // Validate hash to prevent path traversal / SQL injection via param
@@ -92,6 +100,11 @@ async function loadProfile(hash) {
     name: row.name || null,
     podcasts: JSON.parse(row.podcasts),
     created_at: row.created_at,
+    social: {
+      bluesky: row.bluesky_handle ? { handle: row.bluesky_handle, verified: !!row.bluesky_verified } : null,
+      mastodon: row.mastodon_handle ? { handle: row.mastodon_handle, verified: !!row.mastodon_verified } : null,
+      domain: row.verified_domain ? { domain: row.verified_domain, verified: !!row.domain_verified } : null,
+    },
   };
 }
 
@@ -101,6 +114,107 @@ async function updateProfileName(hash, name) {
     [name, hash]
   );
   return rowCount > 0;
+}
+
+// ---- Social identity verification ----
+
+async function verifyBluesky(hash, handle) {
+  const normalized = handle.startsWith('@') ? handle.slice(1) : handle;
+  if (!normalized || normalized.length < 3) throw new Error('Invalid Bluesky handle');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  let profile;
+  try {
+    const resp = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(normalized)}`,
+      { signal: controller.signal, headers: { 'User-Agent': 'Podnality/1.0' } }
+    );
+    if (!resp.ok) throw new Error(`Bluesky handle not found: @${normalized}`);
+    profile = await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const bio = profile.description || '';
+  if (!bio.includes(`/p/${hash}`)) {
+    return {
+      verified: false,
+      handle: normalized,
+      message: `Add your profile URL (/p/${hash}) to your Bluesky bio, then verify again.`,
+    };
+  }
+  return { verified: true, handle: normalized };
+}
+
+async function verifyMastodon(hash, handle) {
+  const stripped = handle.startsWith('@') ? handle.slice(1) : handle;
+  const parts = stripped.split('@');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error('Invalid Mastodon handle — use the format user@instance.social');
+  }
+  const [username, instance] = parts;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  let account;
+  try {
+    const resp = await fetch(
+      `https://${instance}/api/v1/accounts/lookup?acct=${encodeURIComponent(username)}`,
+      { signal: controller.signal, headers: { 'User-Agent': 'Podnality/1.0' } }
+    );
+    if (!resp.ok) throw new Error(`Mastodon account not found: ${stripped}`);
+    account = await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const needle = `/p/${hash}`;
+  const bio = account.note || '';
+  const fields = Array.isArray(account.fields) ? account.fields : [];
+  const hasLink =
+    bio.includes(needle) ||
+    fields.some(f => (f.value || '').includes(needle));
+
+  if (!hasLink) {
+    return {
+      verified: false,
+      handle: stripped,
+      message: `Add your profile URL (/p/${hash}) to your Mastodon bio or profile fields, then verify again.`,
+    };
+  }
+  return { verified: true, handle: stripped };
+}
+
+async function verifyDomain(hash, domain) {
+  const cleaned = domain
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .trim()
+    .toLowerCase();
+  if (!cleaned || !cleaned.includes('.')) throw new Error('Invalid domain name');
+
+  const txtHost = `_podnality.${cleaned}`;
+  const expected = `hash=${hash}`;
+  try {
+    const records = await dns.resolveTxt(txtHost);
+    const found = records.some(chunks => chunks.join('').includes(expected));
+    if (!found) {
+      return {
+        verified: false,
+        domain: cleaned,
+        message: `No matching TXT record found. Add a DNS TXT record for _podnality.${cleaned} with value: hash=${hash}`,
+      };
+    }
+    return { verified: true, domain: cleaned };
+  } catch {
+    return {
+      verified: false,
+      domain: cleaned,
+      message: `DNS lookup failed. Add a TXT record for _podnality.${cleaned} with value: hash=${hash}`,
+    };
+  }
 }
 
 // ---- Podcast metadata cache ----
@@ -395,6 +509,49 @@ app.patch('/api/profiles/:hash', async (req, res) => {
   res.json({ name: trimmed });
 });
 
+// Verify social identity (Bluesky, Mastodon, or domain TXT record)
+app.post('/api/profiles/:hash/verify', async (req, res) => {
+  const { hash } = req.params;
+  if (!isValidHash(hash)) return res.status(400).json({ error: 'Invalid profile id' });
+
+  const profile = await loadProfile(hash);
+  if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+  const { platform, handle } = req.body;
+  if (!['bluesky', 'mastodon', 'domain'].includes(platform)) {
+    return res.status(400).json({ error: 'platform must be bluesky, mastodon, or domain' });
+  }
+  if (typeof handle !== 'string' || !handle.trim()) {
+    return res.status(400).json({ error: 'handle must be a non-empty string' });
+  }
+
+  try {
+    let result;
+    if (platform === 'bluesky') {
+      result = await verifyBluesky(hash, handle.trim());
+      await pool.query(
+        'UPDATE profiles SET bluesky_handle = $1, bluesky_verified = $2 WHERE hash = $3',
+        [result.handle, result.verified, hash]
+      );
+    } else if (platform === 'mastodon') {
+      result = await verifyMastodon(hash, handle.trim());
+      await pool.query(
+        'UPDATE profiles SET mastodon_handle = $1, mastodon_verified = $2 WHERE hash = $3',
+        [result.handle, result.verified, hash]
+      );
+    } else {
+      result = await verifyDomain(hash, handle.trim());
+      await pool.query(
+        'UPDATE profiles SET verified_domain = $1, domain_verified = $2 WHERE hash = $3',
+        [result.domain, result.verified, hash]
+      );
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Enrich podcast metadata (with 24-hour cache per feed URL)
 app.post('/api/podcasts/enrich', async (req, res) => {
   const { xmlurls } = req.body;
@@ -579,9 +736,27 @@ if (process.env.NODE_ENV === 'production') {
     }
 
     const escape = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Build rel="me" link tags for verified social identities
+    let relMeTags = '';
+    if (profile?.social) {
+      const { bluesky, mastodon, domain } = profile.social;
+      if (bluesky?.verified) {
+        relMeTags += `\n    <link rel="me" href="https://bsky.app/profile/${escape(bluesky.handle)}" />`;
+      }
+      if (mastodon?.verified) {
+        const [user, instance] = mastodon.handle.split('@');
+        relMeTags += `\n    <link rel="me" href="https://${escape(instance)}/@${escape(user)}" />`;
+        relMeTags += `\n    <meta name="fediverse:creator" content="@${escape(mastodon.handle)}" />`;
+      }
+      if (domain?.verified) {
+        relMeTags += `\n    <link rel="me" href="https://${escape(domain.domain)}" />`;
+      }
+    }
+
     const injected = html.replace(
       '<meta property="og:title" content="Podcast Personality" />',
-      `<meta property="og:title" content="${escape(title)}" />\n    <meta property="og:description" content="${escape(description)}" />`,
+      `<meta property="og:title" content="${escape(title)}" />\n    <meta property="og:description" content="${escape(description)}" />${relMeTags}`,
     ).replace(
       '<meta property="og:description" content="Discover what your podcast subscriptions say about your personality." />',
       '',

@@ -20,11 +20,26 @@ interface Podcast {
   xmlurl: string;
 }
 
+interface SocialLink {
+  handle: string;
+  verified: boolean;
+}
+
+interface SocialDomain {
+  domain: string;
+  verified: boolean;
+}
+
 interface Profile {
   hash: string;
   name: string | null;
   podcasts: Podcast[];
   created_at: string;
+  social: {
+    bluesky: SocialLink | null;
+    mastodon: SocialLink | null;
+    domain: SocialDomain | null;
+  };
 }
 
 interface PodcastMetadata {
@@ -261,6 +276,9 @@ function ProfilePage() {
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
 
+  const [socialInput, setSocialInput] = useState({ bluesky: '', mastodon: '', domain: '' });
+  const [verifying, setVerifying] = useState<'bluesky' | 'mastodon' | 'domain' | null>(null);
+
   const [enriched, setEnriched] = useState<Record<string, PodcastMetadata | null>>({});
   const [enriching, setEnriching] = useState(false);
 
@@ -408,6 +426,32 @@ function ProfilePage() {
     }
   };
 
+  const handleVerify = async (platform: 'bluesky' | 'mastodon' | 'domain') => {
+    const handle = socialInput[platform].trim();
+    if (!handle) return;
+    setVerifying(platform);
+    try {
+      const res = await axios.post(`/api/profiles/${hash}/verify`, { platform, handle });
+      setProfile(prev => {
+        if (!prev) return prev;
+        const updated = { ...prev, social: { ...prev.social } };
+        if (platform === 'bluesky') updated.social.bluesky = { handle: res.data.handle, verified: res.data.verified };
+        if (platform === 'mastodon') updated.social.mastodon = { handle: res.data.handle, verified: res.data.verified };
+        if (platform === 'domain') updated.social.domain = { domain: res.data.domain, verified: res.data.verified };
+        return updated;
+      });
+      if (res.data.verified) {
+        toaster.create({ title: `${platform.charAt(0).toUpperCase() + platform.slice(1)} verified!`, type: 'success', duration: 2000 });
+      } else {
+        toaster.create({ title: res.data.message || 'Not verified yet', type: 'info', duration: 5000 });
+      }
+    } catch (err: any) {
+      toaster.create({ title: err.response?.data?.error || 'Verification failed', type: 'error', duration: 4000 });
+    } finally {
+      setVerifying(null);
+    }
+  };
+
   const showAnalysisPanel = !enriching && (categoryRatios.length > 0 || Object.keys(frequencyDistribution).length > 0);
 
   return (
@@ -435,15 +479,26 @@ function ProfilePage() {
 
         {profile && (
           <>
-            <Text
-              variant="gradient"
-              gradient={{ from: 'violet', to: 'cyan' }}
-              fw={900}
-              fz="xl"
-              style={{ fontSize: 26 }}
-            >
-              {profile.name ? `${profile.name}'s Profile` : 'Podcast Profile'}
-            </Text>
+            <Group gap={10} align="center" wrap="wrap">
+              <Text
+                variant="gradient"
+                gradient={{ from: 'violet', to: 'cyan' }}
+                fw={900}
+                fz="xl"
+                style={{ fontSize: 26 }}
+              >
+                {profile.name ? `${profile.name}'s Profile` : 'Podcast Profile'}
+              </Text>
+              {profile.social?.bluesky?.verified && (
+                <Badge size="sm" color="blue" variant="filled" title={`Verified Bluesky: @${profile.social.bluesky.handle}`}>🦋 Bluesky</Badge>
+              )}
+              {profile.social?.mastodon?.verified && (
+                <Badge size="sm" color="violet" variant="filled" title={`Verified Mastodon: @${profile.social.mastodon.handle}`}>🦣 Mastodon</Badge>
+              )}
+              {profile.social?.domain?.verified && (
+                <Badge size="sm" color="green" variant="filled" title={`Verified domain: ${profile.social.domain.domain}`}>🌐 {profile.social.domain.domain}</Badge>
+              )}
+            </Group>
 
             {/* Name form — only shown until a name has been saved */}
             {!profile.name && (
@@ -473,6 +528,107 @@ function ProfilePage() {
                 </Group>
               </Box>
             )}
+
+            {/* Social identity verification */}
+            <Box w="100%" p={16} style={{ borderRadius: 8, border: '1px solid var(--mantine-color-gray-2)' }}>
+              <Text size="sm" fw={600} mb={12} c="gray.7">
+                Verify your identity
+              </Text>
+              <Text size="xs" c="gray.5" mb={12}>
+                Link your podroll to your social profile so others can verify it's really you. Add your profile URL (<Text span size="xs" c="blue.5" ff="monospace">/p/{hash}</Text>) to your bio or DNS record first, then click Verify.
+              </Text>
+              <Stack gap={10}>
+                {/* Bluesky */}
+                <Group gap={8} align="flex-end">
+                  <Text size="lg" style={{ lineHeight: 1, paddingBottom: 6 }}>🦋</Text>
+                  <TextInput
+                    size="xs"
+                    placeholder="you.bsky.social"
+                    value={socialInput.bluesky || (profile.social?.bluesky?.handle ?? '')}
+                    onChange={e => setSocialInput(s => ({ ...s, bluesky: e.target.value }))}
+                    style={{ flex: 1 }}
+                    rightSection={profile.social?.bluesky?.verified ? <Text size="xs" c="teal">✓</Text> : null}
+                  />
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="blue"
+                    loading={verifying === 'bluesky'}
+                    disabled={!(socialInput.bluesky || profile.social?.bluesky?.handle)}
+                    onClick={() => handleVerify('bluesky')}
+                  >
+                    {profile.social?.bluesky?.verified ? 'Re-verify' : 'Verify'}
+                  </Button>
+                </Group>
+
+                {/* Mastodon */}
+                <Group gap={8} align="flex-end">
+                  <Text size="lg" style={{ lineHeight: 1, paddingBottom: 6 }}>🦣</Text>
+                  <TextInput
+                    size="xs"
+                    placeholder="you@mastodon.social"
+                    value={socialInput.mastodon || (profile.social?.mastodon?.handle ?? '')}
+                    onChange={e => setSocialInput(s => ({ ...s, mastodon: e.target.value }))}
+                    style={{ flex: 1 }}
+                    rightSection={profile.social?.mastodon?.verified ? <Text size="xs" c="teal">✓</Text> : null}
+                  />
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="violet"
+                    loading={verifying === 'mastodon'}
+                    disabled={!(socialInput.mastodon || profile.social?.mastodon?.handle)}
+                    onClick={() => handleVerify('mastodon')}
+                  >
+                    {profile.social?.mastodon?.verified ? 'Re-verify' : 'Verify'}
+                  </Button>
+                </Group>
+
+                {/* Domain */}
+                <Group gap={8} align="flex-end">
+                  <Text size="lg" style={{ lineHeight: 1, paddingBottom: 6 }}>🌐</Text>
+                  <TextInput
+                    size="xs"
+                    placeholder="yourdomain.com"
+                    value={socialInput.domain || (profile.social?.domain?.domain ?? '')}
+                    onChange={e => setSocialInput(s => ({ ...s, domain: e.target.value }))}
+                    style={{ flex: 1 }}
+                    rightSection={profile.social?.domain?.verified ? <Text size="xs" c="teal">✓</Text> : null}
+                  />
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="green"
+                    loading={verifying === 'domain'}
+                    disabled={!(socialInput.domain || profile.social?.domain?.domain)}
+                    onClick={() => handleVerify('domain')}
+                  >
+                    {profile.social?.domain?.verified ? 'Re-verify' : 'Verify'}
+                  </Button>
+                </Group>
+              </Stack>
+
+              {/* Verified badges summary */}
+              {(profile.social?.bluesky?.verified || profile.social?.mastodon?.verified || profile.social?.domain?.verified) && (
+                <Group gap={8} mt={12}>
+                  {profile.social?.bluesky?.verified && (
+                    <Badge size="sm" color="blue" variant="light" leftSection="🦋">
+                      @{profile.social.bluesky.handle}
+                    </Badge>
+                  )}
+                  {profile.social?.mastodon?.verified && (
+                    <Badge size="sm" color="violet" variant="light" leftSection="🦣">
+                      @{profile.social.mastodon.handle}
+                    </Badge>
+                  )}
+                  {profile.social?.domain?.verified && (
+                    <Badge size="sm" color="green" variant="light" leftSection="🌐">
+                      {profile.social.domain.domain}
+                    </Badge>
+                  )}
+                </Group>
+              )}
+            </Box>
 
             <Group w="100%" justify="space-between" align="center">
               <Text c="gray.5">{profile.podcasts.length} podcasts</Text>
