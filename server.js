@@ -216,7 +216,6 @@ async function verifyDomain(hash, domain) {
     };
   }
 }
-}
 
 // ---- Podcast metadata cache ----
 
