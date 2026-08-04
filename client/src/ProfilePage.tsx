@@ -542,11 +542,11 @@ function ProfilePage() {
                         <Stack gap={8}>
                           {categoryRatios.slice(0, 8).map(({ category, count, ratio }) => (
                             <Box key={category}>
-                              <Group justify="space-between" mb={4}>
-                                <Text size="sm">
+                              <Group justify="space-between" mb={4} wrap="nowrap" gap={8}>
+                                <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
                                   {getCategoryEmoji(category)} {category}
                                 </Text>
-                                <Text size="xs" c="gray.5" fw={500}>
+                                <Text size="xs" c="gray.5" fw={500} style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
                                   {Math.round(ratio * 100)}%{' '}
                                   <Text component="span" c="gray.4">({count})</Text>
                                 </Text>
@@ -600,11 +600,11 @@ function ProfilePage() {
                             const score = personality.traits[trait];
                             return (
                               <Box key={trait}>
-                                <Group justify="space-between" mb={4}>
-                                  <Text size="sm">
+                                <Group justify="space-between" mb={4} wrap="nowrap" gap={8}>
+                                  <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
                                     {TRAIT_EMOJIS[trait]} {TRAIT_LABELS[trait]}
                                   </Text>
-                                  <Text size="xs" c="gray.5" fw={500}>
+                                  <Text size="xs" c="gray.5" fw={500} style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
                                     {score}%
                                   </Text>
                                 </Group>
